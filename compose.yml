@@ -2,9 +2,11 @@ services:
   tailcam:
     image: bradmartin333/tailcam:latest
     container_name: tailcam
-    ports:
-      - "8555:8080"
-    # Add a line per camera; mapping a device that doesn't exist stops the container from starting.
-    devices:
-      - /dev/video0:/dev/video0
     restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    device_cgroup_rules:
+      - "c 81:* rmw"
+    volumes:
+      - /dev:/dev:ro
+    ports:
+      - "${TAILSCALE_IP:?set TAILSCALE_IP in the root .env}:8555:8080"

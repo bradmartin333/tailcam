@@ -8,14 +8,6 @@ A small MJPEG webcam server for watching the dogs over Tailscale. It detects eve
 docker compose pull && docker compose up -d
 ```
 
-Open `http://<tailscale-host>:8555` from any device on the tailnet. Access control is the tailnet itself; nothing is exposed beyond it unless the host forwards the port.
-
-### More cameras
-
-Plug the camera in, check `ls /dev/video*`, add a `devices:` line for it in `compose.yml`, and `docker compose up -d`. Cameras are detected at startup only. Many USB webcams create two nodes (e.g. `video0` and `video1`); mapping both is harmless since metadata-only nodes are skipped.
-
-## Endpoints
-
 | Path | |
 |---|---|
 | `/` | grid of all cameras |
