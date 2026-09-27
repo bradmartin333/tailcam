@@ -30,14 +30,8 @@ Plug the camera in, check `ls /dev/video*`, add a `devices:` line for it in `com
 | `TAILCAM_MAX_CAMERAS` | `10` | highest device index probed |
 | `TAILCAM_JPEG_QUALITY` | `80` | 0–100 |
 
-## Publishing
-
-`.github/workflows/docker.yml` builds `linux/amd64` and `linux/arm64` images and pushes `bradmartin333/tailcam` to Docker Hub on pushes to `main` (`latest`, `sha-…`) and on `v*` tags (semver). It needs repo secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
-
 ## Local dev
 
 ```sh
 uv run --with-requirements requirements.txt tailcam.py
 ```
-
-On macOS the terminal needs camera permission. Docker Desktop on macOS cannot pass through webcams, so container testing needs a Linux host.
