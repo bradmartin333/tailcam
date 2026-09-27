@@ -65,6 +65,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY}")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+        cam.watch()
         frame = None
         try:
             while True:
@@ -78,6 +79,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            cam.unwatch()
 
     def _audio(self, cam_id):
         cam = self._camera(cam_id)
