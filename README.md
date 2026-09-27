@@ -32,3 +32,13 @@ uv run --with-requirements requirements.txt tailcam.py
 ```
 
 On Linux each camera's mic is found through sysfs (same USB device). On macOS it's matched by name ("MacBook Air Camera" → "MacBook Air Microphone") and captured with a pip-bundled ffmpeg, so nothing needs installing. The first time you listen, macOS asks for microphone permission for your terminal.
+
+## Layout
+
+| File | |
+|---|---|
+| `tailcam.py` | HTTP server and entry point |
+| `camera.py` | camera detection and the per-camera frame reader |
+| `audio.py` | mic discovery (sysfs on Linux, AVFoundation on macOS) and the ffmpeg fan-out |
+| `config.py` | env var settings |
+| `web/` | page template, CSS and JS |
