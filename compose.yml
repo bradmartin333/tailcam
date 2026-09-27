@@ -5,7 +5,8 @@ services:
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
     device_cgroup_rules:
-      - "c 81:* rmw"
+      - "c 81:* rmw"   # video4linux
+      - "c 116:* rmw"  # ALSA
     volumes:
       - /dev:/dev:ro
     ports:
