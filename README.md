@@ -14,7 +14,7 @@ docker compose pull && docker compose up -d
 |---|---|
 | `/` | grid of all cameras |
 | `/stream/<n>` | MJPEG stream for camera index `n` |
-| `/audio/<n>` | MP3 stream from camera `n`'s mic (404 if it has none) |
+| `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic (404 if it has none) |
 | `/healthz` | liveness check |
 
 ## Configuration

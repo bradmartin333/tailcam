@@ -15,6 +15,7 @@ PORT = int(os.environ.get("TAILCAM_PORT", "8080"))
 MAX_CAMERAS = int(os.environ.get("TAILCAM_MAX_CAMERAS", "10"))
 JPEG_QUALITY = int(os.environ.get("TAILCAM_JPEG_QUALITY", "80"))
 BOUNDARY = "frame"
+AUDIO_RATE = 24000  # mono s16le; ~48 KB/s is nothing on a tailnet and avoids codec delay
 
 
 def find_ffmpeg():
@@ -32,7 +33,7 @@ FFMPEG = find_ffmpeg()
 
 
 class AudioSource:
-    """Owns one mic; ffmpeg runs only while someone is listening and its MP3 output fans out to all listeners."""
+    """Owns one mic; ffmpeg runs only while someone is listening and its raw PCM output fans out to all listeners."""
 
     def __init__(self, name, input_args):
         self.name = name
@@ -47,8 +48,8 @@ class AudioSource:
             self.listeners.add(q)
             if self.proc is None:
                 self.proc = subprocess.Popen(
-                    [FFMPEG, "-hide_banner", "-loglevel", "error", *self.input_args,
-                     "-ac", "1", "-b:a", "64k", "-f", "mp3", "-"],
+                    [FFMPEG, "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", *self.input_args,
+                     "-ac", "1", "-ar", str(AUDIO_RATE), "-f", "s16le", "-flush_packets", "1", "-"],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 )
                 threading.Thread(target=self._run, args=(self.proc,), daemon=True).start()
@@ -68,7 +69,7 @@ class AudioSource:
                     try:
                         q.put_nowait(chunk)
                     except queue.Full:
-                        pass  # slow listener; MP3 decoders resync on the next frame
+                        pass  # slow listener; it hears a dropout instead of falling behind
         proc.wait()
         with self.lock:
             if self.proc is proc:
@@ -213,10 +214,20 @@ PAGE = """<!doctype html>
 """
 
 SCRIPT = """
-const audio = new Audio();
+// Audio is raw 16-bit mono PCM scheduled through Web Audio with a short jitter buffer.
+// An <audio> element buffers seconds of a live stream and never catches up.
+const RATE = %d;
+const LEAD = 0.15;      // seconds of audio queued ahead when (re)starting
+const MAX_AHEAD = 0.5;  // drop chunks once we're this far ahead so delay can't creep up
+
 const figs = [...document.querySelectorAll("figure[data-cam]")];
 let selected = null;
 let muted = true;
+let ctx = null;
+let session = null;
+
+// iOS otherwise treats Web Audio as ambient and silences it with the ring/silent switch.
+if (navigator.audioSession) navigator.audioSession.type = "playback";
 
 function render() {
   for (const f of figs) f.classList.remove("sel", "muted", "noaudio");
@@ -227,27 +238,65 @@ function render() {
 }
 
 function stop() {
-  audio.pause();
-  audio.removeAttribute("src");
-  audio.load();
+  if (!session) return;
+  session.abort.abort();
+  session.gain.disconnect();  // silences anything already scheduled
+  session = null;
+}
+
+async function listen(cam) {
+  // Created and resumed synchronously inside the tap, which is what autoplay policy requires.
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume();
+  const s = { abort: new AbortController(), gain: ctx.createGain() };
+  s.gain.connect(ctx.destination);
+  session = s;
+  let t = 0;
+  let carry = null;
+  try {
+    const res = await fetch(`/audio/${cam}`, { signal: s.abort.signal, cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let bytes = value;
+      if (carry !== null) {
+        bytes = new Uint8Array(value.length + 1);
+        bytes[0] = carry;
+        bytes.set(value, 1);
+      }
+      const n = bytes.length >> 1;
+      carry = bytes.length & 1 ? bytes[bytes.length - 1] : null;
+      if (n === 0) continue;
+      const now = ctx.currentTime;
+      if (t < now) t = now + LEAD;
+      else if (t > now + MAX_AHEAD) continue;
+      const pcm = new DataView(bytes.buffer, bytes.byteOffset, n * 2);
+      const buf = ctx.createBuffer(1, n, RATE);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) ch[i] = pcm.getInt16(i * 2, true) / 32768;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(s.gain);
+      src.start(t);
+      t += buf.duration;
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return;
+  }
+  // The server ends the stream if the mic stalls; show that as muted so a tap retries.
+  if (session === s) {
+    stop();
+    muted = true;
+    render();
+  }
 }
 
 function apply() {
-  if (muted || selected.dataset.audio !== "1") {
-    stop();
-  } else {
-    // Fresh URL each time so playback starts live rather than from stale buffered audio.
-    audio.src = `/audio/${selected.dataset.cam}?t=${Date.now()}`;
-    audio.play().catch(() => { muted = true; render(); });
-  }
+  stop();
+  if (!muted && selected.dataset.audio === "1") listen(selected.dataset.cam);
   render();
-}
-
-// The server ends the stream if the mic stalls; show that as muted so a tap retries.
-for (const ev of ["ended", "error"]) {
-  audio.addEventListener(ev, () => {
-    if (!muted && audio.getAttribute("src")) { muted = true; render(); }
-  });
 }
 
 for (const f of figs) {
@@ -299,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             body = f"<main>{figures}</main>"
         else:
             body = "<p>No cameras detected.</p>"
-        html = PAGE.format(count=len(self.cameras), body=body, script=SCRIPT)
+        html = PAGE.format(count=len(self.cameras), body=body, script=SCRIPT % AUDIO_RATE)
         self._send(200, "text/html; charset=utf-8", html.encode())
 
     def _stream(self, cam_id):
@@ -331,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404, "Audio not found")
             return
         self.send_response(200)
-        self.send_header("Content-Type", "audio/mpeg")
+        self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         q = cam.audio.subscribe()
