@@ -30,3 +30,5 @@ docker compose pull && docker compose up -d
 ```sh
 uv run --with-requirements requirements.txt tailcam.py
 ```
+
+On Linux each camera's mic is found through sysfs (same USB device). On macOS it's matched by name ("MacBook Air Camera" → "MacBook Air Microphone") and captured with a pip-bundled ffmpeg, so nothing needs installing. The first time you listen, macOS asks for microphone permission for your terminal.

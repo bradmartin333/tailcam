@@ -1,7 +1,10 @@
 import glob
 import os
 import queue
+import re
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,11 +17,26 @@ JPEG_QUALITY = int(os.environ.get("TAILCAM_JPEG_QUALITY", "80"))
 BOUNDARY = "frame"
 
 
-class AudioSource:
-    """Owns one ALSA card; ffmpeg runs only while someone is listening and its MP3 output fans out to all listeners."""
+def find_ffmpeg():
+    """Prefer a system ffmpeg (Docker installs one with ALSA); fall back to the pip-bundled build for macOS dev."""
+    if exe := shutil.which("ffmpeg"):
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        return None
 
-    def __init__(self, card):
-        self.card = card
+
+FFMPEG = find_ffmpeg()
+
+
+class AudioSource:
+    """Owns one mic; ffmpeg runs only while someone is listening and its MP3 output fans out to all listeners."""
+
+    def __init__(self, name, input_args):
+        self.name = name
+        self.input_args = input_args
         self.listeners = set()
         self.proc = None
         self.lock = threading.Lock()
@@ -29,8 +47,7 @@ class AudioSource:
             self.listeners.add(q)
             if self.proc is None:
                 self.proc = subprocess.Popen(
-                    ["ffmpeg", "-hide_banner", "-loglevel", "error",
-                     "-f", "alsa", "-i", f"plughw:{self.card},0",
+                    [FFMPEG, "-hide_banner", "-loglevel", "error", *self.input_args,
                      "-ac", "1", "-b:a", "64k", "-f", "mp3", "-"],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 )
@@ -55,7 +72,7 @@ class AudioSource:
         proc.wait()
         with self.lock:
             if self.proc is proc:
-                print(f"audio card {self.card}: ffmpeg exited ({proc.returncode})", flush=True)
+                print(f"audio {self.name}: ffmpeg exited ({proc.returncode})", flush=True)
                 self.proc = None
 
 
@@ -97,27 +114,70 @@ class Camera:
             return self.frame
 
 
-def find_audio_card(index):
-    """Return the ALSA card number on the same USB device as /dev/video<index>, if any."""
+def find_alsa_audio(index):
+    """Linux: the ALSA card on the same USB device as /dev/video<index>, if any."""
     try:
         usb_dev = os.path.dirname(os.path.realpath(f"/sys/class/video4linux/video{index}/device"))
         for card in glob.glob("/sys/class/sound/card*"):
             if os.path.dirname(os.path.realpath(f"{card}/device")) == usb_dev:
-                return int(card.rsplit("card", 1)[1])
+                n = int(card.rsplit("card", 1)[1])
+                return AudioSource(f"card {n}", ["-f", "alsa", "-i", f"plughw:{n},0"])
     except (OSError, ValueError):
         pass
     return None
 
 
+def list_avfoundation_devices():
+    """macOS: ({index: name} for video, {index: name} for audio) as ffmpeg's AVFoundation input sees them."""
+    out = subprocess.run(
+        [FFMPEG, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+        capture_output=True, text=True,
+    ).stderr
+    video, audio, current = {}, {}, None
+    for line in out.splitlines():
+        if "video devices:" in line:
+            current = video
+        elif "audio devices:" in line:
+            current = audio
+        elif current is not None and (m := re.search(r"\] \[(\d+)\] (.+)$", line)):
+            current[int(m.group(1))] = m.group(2)
+    return video, audio
+
+
+def device_base_name(name):
+    return re.sub(r"\s+(camera|microphone|mic|audio)$", "", name.strip(), flags=re.I).lower()
+
+
+def find_avfoundation_audio(index, devices):
+    """macOS: pair camera <index> with the mic sharing its name, e.g. "MacBook Air Camera" -> "MacBook Air Microphone"."""
+    video, audio = devices
+    if index not in video:
+        return None
+    base = device_base_name(video[index])
+    for a, name in audio.items():
+        if device_base_name(name) == base:
+            return AudioSource(name, ["-f", "avfoundation", "-i", f":{a}"])
+    return None
+
+
 def detect_cameras():
+    if FFMPEG is None:
+        print("warning: ffmpeg not found, audio disabled", flush=True)
+        find_audio = lambda i: None
+    elif sys.platform == "darwin":
+        devices = list_avfoundation_devices()
+        find_audio = lambda i: find_avfoundation_audio(i, devices)
+    else:
+        find_audio = find_alsa_audio
+
     cameras = {}
     for i in range(MAX_CAMERAS):
         cap = cv2.VideoCapture(i)
         # Many USB webcams expose a second metadata-only /dev/video node; reading a frame filters those out.
         if cap.isOpened() and cap.read()[0]:
-            card = find_audio_card(i)
-            cameras[i] = Camera(i, cap, AudioSource(card) if card is not None else None)
-            print(f"found camera {i} (audio: {'card ' + str(card) if card is not None else 'none'})", flush=True)
+            audio = find_audio(i)
+            cameras[i] = Camera(i, cap, audio)
+            print(f"found camera {i} (audio: {audio.name if audio else 'none'})", flush=True)
         else:
             cap.release()
     if not cameras:
@@ -181,6 +241,13 @@ function apply() {
     audio.play().catch(() => { muted = true; render(); });
   }
   render();
+}
+
+// The server ends the stream if the mic stalls; show that as muted so a tap retries.
+for (const ev of ["ended", "error"]) {
+  audio.addEventListener(ev, () => {
+    if (!muted && audio.getAttribute("src")) { muted = true; render(); }
+  });
 }
 
 for (const f of figs) {
@@ -271,10 +338,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             while True:
                 try:
-                    self.wfile.write(q.get(timeout=5))
+                    self.wfile.write(q.get(timeout=10))
                 except queue.Empty:
-                    if cam.audio.proc is None:
-                        return  # ffmpeg died; the client reconnects on its next tap
+                    # ffmpeg stalled or died. Without writes we'd never notice the client leaving,
+                    # so end the stream; the page shows muted and the next tap retries.
+                    return
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
