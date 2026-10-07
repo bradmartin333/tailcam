@@ -1,3 +1,6 @@
+# Tailnet-only: anyone on the tailnet can watch at http://<tailnet-ip>:8555/.
+# For the public, token-gated deployment see the README ("Publicly, behind a
+# token link"); it lives in the homelab repo, not here.
 services:
   tailcam:
     image: bradmartin333/tailcam:latest
@@ -10,4 +13,4 @@ services:
     volumes:
       - /dev:/dev:ro
     ports:
-      - "${TAILSCALE_IP:?set TAILSCALE_IP in the root .env}:8555:8080"
+      - "${TAILSCALE_IP:?set TAILSCALE_IP to the box's tailnet IP (tailscale ip -4)}:8555:8080"
