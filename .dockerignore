@@ -1,3 +1,4 @@
 *
 !requirements.txt
-!tailcam.py
+!tailcam/
+**/__pycache__
