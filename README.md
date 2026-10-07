@@ -23,13 +23,13 @@ Then open `http://<tailnet-ip>:8555/`.
 
 ### Publicly, behind a token link
 
-The homelab runs it this way at `https://$DOGCAM_DOMAIN`, from [`tailcam/docker-compose.yml`](https://github.com/bradmartin333/homelab/blob/main/tailcam/docker-compose.yml) in the homelab repo. There it's deployed with the rest of the stack and reached through the Cloudflare tunnel and traefik, with no published port. Traefik labels do the gating:
+The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker-compose.yml`](https://github.com/bradmartin333/homelab/blob/main/tailcam/docker-compose.yml) in the homelab repo. There it's deployed with the rest of the stack and reached through the Cloudflare tunnel and traefik, with no published port. Traefik labels do the gating:
 
-1. Share `https://$DOGCAM_DOMAIN/?k=<DOGCAM_TOKEN>`.
-2. The first visit sets a one-year `dc` cookie and redirects to the bare URL, so the token doesn't stay in the address bar or history.
+1. Share `https://$TAILCAM_DOMAIN/?k=<TAILCAM_TOKEN>`.
+2. The first visit sets a one-year `tc` cookie and redirects to the bare URL, so the token doesn't stay in the address bar or history.
 3. After that, the bare URL and the key link both work. Without the cookie, every path is a 404.
 
-`DOGCAM_TOKEN` lives in the homelab's `tailcam/.env` (sops-encrypted as `.env.enc`) and must be hex (`openssl rand -hex 32`), because it's pasted into a router regex. Changing it breaks every link and cookie already handed out. It also shows up in traefik's access log on the first visit. `DOGCAM_DOMAIN` is set in the homelab's root `.env`.
+`TAILCAM_TOKEN` lives in the homelab's `tailcam/.env` (sops-encrypted as `.env.enc`) and must be hex (`openssl rand -hex 32`), because it's pasted into a router regex. Changing it breaks every link and cookie already handed out. It also shows up in traefik's access log on the first visit. `TAILCAM_DOMAIN` is set in the homelab's root `.env`.
 
 ## Endpoints
 
