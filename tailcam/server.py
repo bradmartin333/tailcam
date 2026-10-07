@@ -46,14 +46,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.cameras:
             figures = "".join(
                 f'<figure data-cam="{i}" data-audio="{1 if cam.audio else 0}">'
-                f'<img src="/stream/{i}" alt="Camera {i}">'
-                f'<figcaption>Camera {i}{"" if cam.audio else " &middot; no audio"}</figcaption></figure>'
+                f'<img src="/stream/{i}" alt="Camera {i}"></figure>'
                 for i, cam in self.cameras.items()
             )
             body = f"<main>{figures}</main>"
         else:
             body = "<p>No cameras detected.</p>"
-        html = PAGE.substitute(count=len(self.cameras), body=body, audio_rate=AUDIO_RATE)
+        html = PAGE.substitute(body=body, audio_rate=AUDIO_RATE)
         self._send(200, "text/html; charset=utf-8", html.encode())
 
     def _stream(self, cam_id):
