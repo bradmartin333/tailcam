@@ -35,6 +35,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
@@ -65,12 +66,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         frame = None
+        empty = 0
         cam.watch()
         try:
             while True:
                 frame = cam.wait_frame(frame)
                 if frame is None:
+                    # Nothing is written while the camera has no frames, so a departed client would
+                    # never be noticed and would keep the camera awake. Give up; the page can reload.
+                    empty += 1
+                    if empty >= 3:
+                        return
                     continue
+                empty = 0
                 self.wfile.write(
                     f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n".encode()
                     + frame

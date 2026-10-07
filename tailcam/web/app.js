@@ -97,9 +97,11 @@ render();
 // Drop the video streams while the tab is hidden so the server can idle the cameras.
 // Audio keeps playing, so a selected mic can still be listened to with the screen off.
 const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-document.addEventListener("visibilitychange", () => {
+function syncStreams() {
   for (const f of figs) {
     const img = f.querySelector("img");
     img.src = document.hidden ? BLANK : `/stream/${f.dataset.cam}?t=${Date.now()}`;
   }
-});
+}
+document.addEventListener("visibilitychange", syncStreams);
+if (document.hidden) syncStreams();  // opened in a background tab
