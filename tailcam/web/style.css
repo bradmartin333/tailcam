@@ -4,5 +4,5 @@ figure { margin: 0; background: #000; border-radius: 8px; overflow: hidden; curs
 figure.sel { box-shadow: 0 0 0 3px #2ecc40; }
 figure.sel.muted { box-shadow: 0 0 0 3px rgba(46, 204, 64, 0.35); }
 figure.sel.noaudio { box-shadow: 0 0 0 3px #e74c3c; }
-img { display: block; width: 100%; height: auto; }
+img { display: block; width: 100%; height: auto; aspect-ratio: auto 4 / 3; }  /* holds the tile open until the first frame arrives */
 p { padding: 12px 16px; margin: 0; }
