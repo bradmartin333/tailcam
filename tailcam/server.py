@@ -25,7 +25,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in STATIC:
             self._send(200, *STATIC[self.path])
         elif self.path.startswith("/stream/"):
-            self._stream(self.path[len("/stream/"):])
+            self._stream(self.path[len("/stream/"):].split("?", 1)[0])
         elif self.path.startswith("/audio/"):
             self._audio(self.path[len("/audio/"):].split("?", 1)[0])
         else:
@@ -65,6 +65,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         frame = None
+        cam.watch()
         try:
             while True:
                 frame = cam.wait_frame(frame)
@@ -77,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            cam.unwatch()
 
     def _audio(self, cam_id):
         cam = self._camera(cam_id)

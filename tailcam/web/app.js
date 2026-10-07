@@ -93,3 +93,13 @@ for (const f of figs) {
 
 selected = figs.find(f => f.dataset.cam === "0") || figs[0] || null;
 render();
+
+// Drop the video streams while the tab is hidden so the server can idle the cameras.
+// Audio keeps playing, so a selected mic can still be listened to with the screen off.
+const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+document.addEventListener("visibilitychange", () => {
+  for (const f of figs) {
+    const img = f.querySelector("img");
+    img.src = document.hidden ? BLANK : `/stream/${f.dataset.cam}?t=${Date.now()}`;
+  }
+});
