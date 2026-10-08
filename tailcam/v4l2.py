@@ -72,10 +72,14 @@ def extension_units(index):
     with open(f"{usb_dev}/descriptors", "rb") as f:
         d = f.read()
     units = {}
+    video_control = False
     i = 0
-    while i + 20 <= len(d) and d[i]:
-        # CS_INTERFACE / VC_EXTENSION_UNIT: bLength, type, subtype, bUnitID, guidExtensionCode[16], ...
-        if d[i + 1] == 0x24 and d[i + 2] == 0x06 and d[i] >= 24:
+    while i + 2 <= len(d) and d[i]:
+        if d[i + 1] == 0x04 and d[i] >= 9:
+            # INTERFACE: class 0x0e (video), subclass 0x01 (control). Audio units also use subtype 0x06.
+            video_control = d[i + 5] == 0x0E and d[i + 6] == 0x01
+        elif video_control and d[i + 1] == 0x24 and d[i + 2] == 0x06 and d[i] >= 24 and i + 20 <= len(d):
+            # CS_INTERFACE / VC_EXTENSION_UNIT: bLength, type, subtype, bUnitID, guidExtensionCode[16], ...
             units[uuid.UUID(bytes_le=d[i + 4:i + 20])] = d[i + 3]
         i += d[i]
     return units
@@ -88,7 +92,7 @@ class Controls:
     def __init__(self, index):
         self.path = f"/dev/video{index}"
         self.lock = threading.Lock()
-        self.wanted = {}  # cid -> value, in the order they were set
+        self.wanted = {}  # cid -> value we've set, reapplied by apply()
         with self._open() as fd:
             self.available = {q.id: q for q in self._enumerate(fd)}
             # Status LEDs aren't a standard V4L2 control. They show up only when the driver or a
@@ -99,6 +103,7 @@ class Controls:
             self.logitech_led = extension_units(index).get(LOGITECH_PERIPHERAL)
         except OSError:
             self.logitech_led = None
+        self.has_autofocus = CID_FOCUS_AUTO in self.available
 
     @contextmanager
     def _open(self):
@@ -149,57 +154,64 @@ class Controls:
     def names(self):
         return [q.name.decode(errors="replace") for q in self.available.values()]
 
-    def get(self, cid):
-        with self._open() as fd:
-            c = Control(id=cid)
-            fcntl.ioctl(fd, VIDIOC_G_CTRL, c)
-            return c.value
+    def _write(self, fd, cid, value):
+        fcntl.ioctl(fd, VIDIOC_S_CTRL, Control(id=cid, value=value))
 
-    def set(self, cid, value):
+    def _read(self, fd, cid):
+        c = Control(id=cid)
+        fcntl.ioctl(fd, VIDIOC_G_CTRL, c)
+        return c.value
+
+    def _set(self, *settings):
+        """Write (cid, value) pairs in order through one open of the device, and remember them."""
         with self.lock:
             with self._open() as fd:
-                fcntl.ioctl(fd, VIDIOC_S_CTRL, Control(id=cid, value=value))
-            self.wanted.pop(cid, None)
-            self.wanted[cid] = value
+                for cid, value in settings:
+                    self._write(fd, cid, value)
+                    self.wanted[cid] = value
 
     def apply(self):
         """Turn the LEDs off and reapply every value set so far, e.g. after the device was reopened."""
         with self.lock:
             settings = {**self.leds, **self.wanted}
-        for cid, value in settings.items():
-            try:
-                with self._open() as fd:
-                    fcntl.ioctl(fd, VIDIOC_S_CTRL, Control(id=cid, value=value))
-            except OSError as e:
-                print(f"{self.path}: setting control {cid:#x} failed: {e}", flush=True)
-        if self.logitech_led is not None:
-            try:
-                with self._open() as fd:
-                    self._logitech_led_off(fd)
-            except OSError as e:
-                print(f"{self.path}: turning the Logitech LED off failed: {e}", flush=True)
+        # Autofocus first: a manual focus value is refused while autofocus is still on.
+        order = sorted(settings.items(), key=lambda kv: kv[0] != CID_FOCUS_AUTO)
+        try:
+            with self._open() as fd:
+                for cid, value in order:
+                    try:
+                        self._write(fd, cid, value)
+                    except OSError as e:
+                        print(f"{self.path}: setting control {cid:#x} failed: {e}", flush=True)
+                if self.logitech_led is not None:
+                    try:
+                        self._logitech_led_off(fd)
+                    except OSError as e:
+                        print(f"{self.path}: turning the Logitech LED off failed: {e}", flush=True)
+        except OSError as e:
+            print(f"{self.path}: can't open to apply controls: {e}", flush=True)
+
+    def focus_limits(self):
+        """{min, max, step} of manual focus, or None if the camera can't focus manually."""
+        q = self.available.get(CID_FOCUS_ABSOLUTE)
+        return None if q is None else {"min": q.minimum, "max": q.maximum, "step": q.step or 1}
 
     def focus(self):
-        """{min, max, step, value, auto} for the focus slider, or None if the camera can't focus manually."""
-        q = self.available.get(CID_FOCUS_ABSOLUTE)
-        if q is None:
-            return None
-        try:
-            value = self.get(CID_FOCUS_ABSOLUTE)
-            auto = bool(self.get(CID_FOCUS_AUTO)) if CID_FOCUS_AUTO in self.available else None
-        except OSError:
-            return None
-        return {"min": q.minimum, "max": q.maximum, "step": q.step or 1, "value": value, "auto": auto}
+        """focus_limits() plus the current value and autofocus state (None without autofocus).
+        Only call when focus_limits() isn't None; raises OSError if the device can't be read."""
+        with self._open() as fd:
+            value = self._read(fd, CID_FOCUS_ABSOLUTE)
+            auto = bool(self._read(fd, CID_FOCUS_AUTO)) if self.has_autofocus else None
+        return {**self.focus_limits(), "value": value, "auto": auto}
 
     def set_focus(self, value):
         q = self.available[CID_FOCUS_ABSOLUTE]
         value = min(max(int(value), q.minimum), q.maximum)
-        if CID_FOCUS_AUTO in self.available:
-            self.set(CID_FOCUS_AUTO, 0)  # manual focus is ignored (or refused) while autofocus is on
-        self.set(CID_FOCUS_ABSOLUTE, value)
+        # Manual focus is ignored (or refused) while autofocus is on.
+        self._set(*([(CID_FOCUS_AUTO, 0)] if self.has_autofocus else []), (CID_FOCUS_ABSOLUTE, value))
 
     def set_autofocus(self, on):
-        self.set(CID_FOCUS_AUTO, 1 if on else 0)
+        self._set((CID_FOCUS_AUTO, 1 if on else 0))
         if on:
             with self.lock:
                 self.wanted.pop(CID_FOCUS_ABSOLUTE, None)  # don't reapply a stale manual value over autofocus

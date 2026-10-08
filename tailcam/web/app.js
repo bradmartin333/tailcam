@@ -93,7 +93,8 @@ for (const f of figs) {
 
 // Focus: while a drag is in flight only the latest value is sent next, so a slow link
 // (or traefik's rate limit) never builds a queue of stale positions.
-// While autofocus is on the slider is disabled and follows the lens, polled from the server.
+// The selected feed's focus is polled from the server, so the slider follows the lens under
+// autofocus (when it's disabled) and picks up changes made by other viewers.
 const focusBars = new Map();
 for (const f of figs) {
   const bar = f.querySelector(".focus");
@@ -104,7 +105,9 @@ for (const f of figs) {
   const sync = () => { slider.disabled = !!af?.checked; };
   let busy = false;
   let pending = null;
+  let touched = 0;  // last local change; a poll answered around then may predate it
   async function send(body) {
+    touched = Date.now();
     if (busy) { pending = body; return; }
     busy = true;
     try {
@@ -116,21 +119,21 @@ for (const f of figs) {
   slider.addEventListener("input", () => send({ value: slider.value }));
   if (af) af.addEventListener("change", () => { sync(); send({ auto: af.checked ? "1" : "0" }); });
   sync();
-  focusBars.set(f, { slider, af, sync, isBusy: () => busy });
+  focusBars.set(f, { slider, af, sync, isSettled: () => !busy && Date.now() - touched > 1500 });
 }
 
 let polling = false;
 setInterval(async () => {
   const bar = focusBars.get(selected);
-  if (!bar?.af?.checked || document.hidden || polling || bar.isBusy()) return;
+  if (!bar || document.hidden || polling || !bar.isSettled()) return;
   polling = true;
   try {
     const res = await fetch(`/focus/${selected.dataset.cam}`, { cache: "no-store" });
     if (res.ok) {
       const focus = await res.json();
-      if (bar.af.checked && !bar.isBusy()) {  // the viewer may have unticked auto meanwhile
+      if (bar.isSettled()) {  // the viewer may have moved the slider meanwhile
         bar.slider.value = focus.value;
-        bar.af.checked = focus.auto;
+        if (bar.af) bar.af.checked = focus.auto;
         bar.sync();
       }
     }
