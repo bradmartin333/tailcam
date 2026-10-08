@@ -8,5 +8,7 @@ COPY tailcam ./tailcam
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"
+# Traefik only routes to a healthy container, so check every 2s while starting up instead of
+# waiting 30s for the first check (--start-interval needs Docker Engine 25+; older ones ignore it).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"
 CMD ["python", "-m", "tailcam"]
