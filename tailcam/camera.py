@@ -98,8 +98,8 @@ def detect_cameras():
             if controls:
                 # Logged so it's easy to see from `docker logs` what a camera can do, e.g. whether it has an LED control.
                 print(f"camera {i} controls: {', '.join(controls.names()) or 'none'}", flush=True)
-                if not controls.leds:
-                    print(f"camera {i}: no LED control exposed, LED left as is", flush=True)
+                if not controls.has_led():
+                    print(f"camera {i}: no LED control found, LED left as is", flush=True)
         else:
             cap.release()
     if not cameras:
