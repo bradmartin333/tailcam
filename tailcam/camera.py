@@ -5,30 +5,35 @@ import time
 import cv2
 
 from .audio import audio_finder
-from .config import ALWAYS_ON, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .config import IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .v4l2 import controls_for
 
 
 class Camera:
     """Owns one capture device; a single reader thread fans frames out to all viewers.
 
-    Unless ALWAYS_ON is set, the device is released once nobody has watched for IDLE_GRACE seconds,
-    and reopened when the next viewer arrives. The grace period covers page reloads.
+    The device stays open and streaming for the container's whole life, because switching a webcam
+    on makes it click and flash its LED. Once nobody has watched for IDLE_GRACE seconds, frames are
+    only grabbed (dequeued and dropped), not decoded or encoded, which costs next to no CPU.
+    The grace period covers page reloads.
     """
 
-    def __init__(self, index, cap, audio=None):
+    def __init__(self, index, cap, audio=None, controls=None):
         self.index = index
         self.cap = cap
         self.audio = audio
+        self.controls = controls
         self.frame = None
         self.viewers = 0
         self.last_viewer = time.monotonic()
         self.cond = threading.Condition()
+        if controls:
+            controls.apply()
         threading.Thread(target=self._run, daemon=True).start()
 
     def watch(self):
         with self.cond:
             self.viewers += 1
-            self.cond.notify_all()
 
     def unwatch(self):
         with self.cond:
@@ -36,25 +41,22 @@ class Camera:
             self.last_viewer = time.monotonic()
 
     def _idle(self):
-        return not ALWAYS_ON and not self.viewers and time.monotonic() - self.last_viewer > IDLE_GRACE
+        return not self.viewers and time.monotonic() - self.last_viewer > IDLE_GRACE
 
     def _run(self):
         failures = 0
+        was_idle = False
         while True:
             with self.cond:
                 idle = self._idle()
                 if idle:
                     self.frame = None  # so the next viewer waits for a fresh frame, not a stale one
-            if idle:
-                self.cap.release()
-                self.cap = None
-                print(f"camera {self.index}: idle", flush=True)
-                with self.cond:
-                    self.cond.wait_for(lambda: self.viewers)
-                print(f"camera {self.index}: waking", flush=True)
-                self.cap = cv2.VideoCapture(self.index)
-                failures = 0
-            ok, img = self.cap.read()
+            if idle != was_idle:
+                print(f"camera {self.index}: {'idle' if idle else 'waking'}", flush=True)
+                was_idle = idle
+            ok = self.cap.grab()
+            if ok and not idle:
+                ok, img = self.cap.retrieve()
             if not ok:
                 failures += 1
                 time.sleep(0.1)
@@ -63,9 +65,13 @@ class Camera:
                     self.cap.release()
                     time.sleep(2)
                     self.cap = cv2.VideoCapture(self.index)
+                    if self.controls:
+                        self.controls.apply()
                     failures = 0
                 continue
             failures = 0
+            if idle:
+                continue
             ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
                 with self.cond:
@@ -86,8 +92,14 @@ def detect_cameras():
         # Many USB webcams expose a second metadata-only /dev/video node; reading a frame filters those out.
         if cap.isOpened() and cap.read()[0]:
             audio = find_audio(i)
-            cameras[i] = Camera(i, cap, audio)
+            controls = controls_for(i)
+            cameras[i] = Camera(i, cap, audio, controls)
             print(f"found camera {i} (audio: {audio.name if audio else 'none'})", flush=True)
+            if controls:
+                # Logged so it's easy to see from `docker logs` what a camera can do, e.g. whether it has an LED control.
+                print(f"camera {i} controls: {', '.join(controls.names()) or 'none'}", flush=True)
+                if not controls.leds:
+                    print(f"camera {i}: no LED control exposed, LED left as is", flush=True)
         else:
             cap.release()
     if not cameras:

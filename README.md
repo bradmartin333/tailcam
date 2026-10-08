@@ -2,9 +2,13 @@
 
 A small MJPEG webcam server for watching the dogs, either over Tailscale or publicly behind a secret link. It detects every attached camera at startup and serves them all on one page.
 
-Cameras only capture while someone is watching. Ten seconds (`TAILCAM_IDLE_GRACE`) after the last viewer leaves (or hides the tab), a camera is released and stops using CPU. The next viewer wakes it up again, which takes about a second. Audio keeps playing while the tab is hidden.
+Cameras stay on for as long as the container runs, because switching a webcam on makes it click and flash its LED, which bothers the dogs. Frames are only decoded and encoded while someone is watching, though. Ten seconds (`TAILCAM_IDLE_GRACE`) after the last viewer leaves (or hides the tab), a camera goes idle and its frames are dropped unread. Audio keeps playing while the tab is hidden.
+
+At startup each camera's status LED is switched off if its driver exposes an LED control (Logitech cameras do once `uvcdynctrl`'s mappings are loaded on the host). The startup log lists every control a camera has, so `docker logs tailcam` shows whether yours does.
 
 Tap a feed to listen to its mic. The page loads with camera 0 selected and muted, because browsers block autoplay. Tap the selected feed to toggle mute, or tap another feed to switch to it. A green outline means the selected feed has audio. Red means that camera has no mic.
+
+If the selected camera supports manual focus, a slider under its feed sets it. Moving the slider turns autofocus off, and the "auto" box turns it back on. The setting lasts until the container restarts.
 
 ## Run it
 
@@ -38,6 +42,7 @@ The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker
 | `/` | grid of all cameras |
 | `/stream/<n>` | MJPEG stream for camera index `n` |
 | `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic (404 if it has none) |
+| `POST /focus/<n>` | form body `value=<n>` for manual focus, or `auto=0`/`auto=1` (404 if the camera can't focus) |
 | `/healthz` | liveness check |
 
 ## Configuration
@@ -47,8 +52,7 @@ The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker
 | `TAILCAM_PORT` | `8080` | port inside the container |
 | `TAILCAM_MAX_CAMERAS` | `10` | highest device index probed |
 | `TAILCAM_JPEG_QUALITY` | `80` | 0–100 |
-| `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera is released |
-| `TAILCAM_ALWAYS_ON` | `0` | `1` keeps every camera capturing even with no viewers |
+| `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera stops encoding |
 
 ## Local dev
 
@@ -56,4 +60,4 @@ The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker
 uv run --with-requirements requirements.txt -m tailcam
 ```
 
-On Linux each camera's mic is found through sysfs (same USB device). On macOS it's matched by name ("MacBook Air Camera" → "MacBook Air Microphone") and captured with a pip-bundled ffmpeg, so nothing needs installing. The first time you listen, macOS asks for microphone permission for your terminal.
+On Linux each camera's mic is found through sysfs (same USB device). On macOS it's matched by name ("MacBook Air Camera" → "MacBook Air Microphone") and captured with a pip-bundled ffmpeg, so nothing needs installing. Camera controls (focus, LEDs) are Linux-only, so the slider doesn't appear on macOS. The first time you listen, macOS asks for microphone permission for your terminal.

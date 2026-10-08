@@ -5,4 +5,9 @@ figure.sel { box-shadow: 0 0 0 3px #2ecc40; }
 figure.sel.muted { box-shadow: 0 0 0 3px rgba(46, 204, 64, 0.35); }
 figure.sel.noaudio { box-shadow: 0 0 0 3px #e74c3c; }
 img { display: block; width: 100%; height: auto; aspect-ratio: auto 4 / 3; }  /* holds the tile open until the first frame arrives */
+/* Every focusable feed reserves the bar's height, so selecting one doesn't shift the grid. */
+.focus { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 14px; cursor: default; }
+figure:not(.sel) .focus { visibility: hidden; }
+.focus input[type=range] { flex: 1; margin: 0; accent-color: #2ecc40; }
+.focus label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 p { padding: 12px 16px; margin: 0; }

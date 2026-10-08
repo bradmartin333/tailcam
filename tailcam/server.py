@@ -2,6 +2,7 @@ import queue
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from string import Template
+from urllib.parse import parse_qs
 
 from .config import AUDIO_RATE
 
@@ -31,6 +32,12 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def do_POST(self):
+        if self.path.startswith("/focus/"):
+            self._focus(self.path[len("/focus/"):].split("?", 1)[0])
+        else:
+            self.send_error(404)
+
     def _send(self, code, ctype, body):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -46,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.cameras:
             figures = "".join(
                 f'<figure data-cam="{i}" data-audio="{1 if cam.audio else 0}">'
-                f'<img src="/stream/{i}" alt="Camera {i}"></figure>'
+                f'<img src="/stream/{i}" alt="Camera {i}">{focus_bar(cam)}</figure>'
                 for i, cam in self.cameras.items()
             )
             body = f"<main>{figures}</main>"
@@ -111,5 +118,42 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             cam.audio.unsubscribe(q)
 
+    def _focus(self, cam_id):
+        """Form body with either value=<n> (manual focus) or auto=0|1."""
+        cam = self._camera(cam_id)
+        if cam is None or cam.controls is None or cam.controls.focus() is None:
+            self.send_error(404, "Focus control not found")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode()).items()}
+        try:
+            if "auto" in form and cam.controls.focus()["auto"] is not None:
+                cam.controls.set_autofocus(form["auto"] == "1")
+            elif form.get("value", "").lstrip("-").isdigit():
+                cam.controls.set_focus(int(form["value"]))
+            else:
+                self.send_error(400)
+                return
+        except OSError as e:
+            self.send_error(500, f"Setting focus failed: {e}")
+            return
+        self.send_response(204)
+        self.end_headers()
+
     def log_message(self, fmt, *args):
         pass
+
+
+def focus_bar(cam):
+    """The focus slider (and autofocus toggle, if the camera has one), shown under the selected feed."""
+    focus = cam.controls.focus() if cam.controls else None
+    if focus is None:
+        return ""
+    auto = ""
+    if focus["auto"] is not None:
+        checked = " checked" if focus["auto"] else ""
+        auto = f'<label><input type="checkbox" class="af"{checked}> auto</label>'
+    return (
+        f'<div class="focus"><input type="range" aria-label="Focus" min="{focus["min"]}" max="{focus["max"]}"'
+        f' step="{focus["step"]}" value="{focus["value"]}">{auto}</div>'
+    )

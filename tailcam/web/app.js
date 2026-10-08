@@ -91,6 +91,32 @@ for (const f of figs) {
   });
 }
 
+// Focus: while a drag is in flight only the latest value is sent next, so a slow link
+// (or traefik's rate limit) never builds a queue of stale positions.
+for (const f of figs) {
+  const bar = f.querySelector(".focus");
+  if (!bar) continue;
+  bar.addEventListener("click", e => e.stopPropagation());  // don't toggle mute
+  const slider = bar.querySelector("input[type=range]");
+  const af = bar.querySelector(".af");
+  let busy = false;
+  let pending = null;
+  async function send(body) {
+    if (busy) { pending = body; return; }
+    busy = true;
+    try {
+      await fetch(`/focus/${f.dataset.cam}`, { method: "POST", body: new URLSearchParams(body) });
+    } catch {}
+    busy = false;
+    if (pending) { const next = pending; pending = null; send(next); }
+  }
+  slider.addEventListener("input", () => {
+    if (af) af.checked = false;  // the server turns autofocus off for a manual value
+    send({ value: slider.value });
+  });
+  if (af) af.addEventListener("change", () => send({ auto: af.checked ? "1" : "0" }));
+}
+
 selected = figs.find(f => f.dataset.cam === "0") || figs[0] || null;
 render();
 
