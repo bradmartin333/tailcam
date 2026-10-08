@@ -8,7 +8,9 @@ At startup, tailcam switches off each camera's status LED. Newer Logitech webcam
 
 ## Using the page
 
-The page loads with camera 0 selected and muted, because browsers block autoplay. Tap the selected feed to toggle its mic, or tap another feed to switch to it. A green outline means the selected feed has audio, and red means its camera has no mic.
+The page loads with the first feed selected and muted, because browsers block autoplay. Tap the selected feed to toggle its mic, or tap another feed to switch to it. A green outline means the selected feed has audio, and red means its camera has no mic.
+
+On a keyboard, ← and → move the selected feed earlier or later on the page. The order is shared by every viewer and lasts until the container restarts. Camera numbers can change across reboots, so set it again after one.
 
 If the selected camera can focus manually, a slider appears under its feed. While "auto" is ticked, the slider is disabled and follows the autofocus. Untick it to focus by hand. The setting lasts until the container restarts.
 
@@ -45,6 +47,7 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `/stream/<n>` | MJPEG stream from camera `n` |
 | `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic; 404 if it has none |
 | `/focus/<n>` | `GET` returns focus as JSON; `POST` sets it with form body `value=<n>` or `auto=0`/`auto=1`; 404 if the camera can't focus |
+| `/order` | `POST` sets the page order with form body `order=2,0,1` (every camera, once each) |
 | `/healthz` | liveness check |
 
 ## Configuration

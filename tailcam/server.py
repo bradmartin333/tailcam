@@ -18,6 +18,7 @@ STATIC = {
 
 class Handler(BaseHTTPRequestHandler):
     cameras = {}
+    order = []  # camera ids in page order; set from the page, lasts until restart
 
     def do_GET(self):
         if self.path == "/healthz":  # the container's own healthcheck uses 127.0.0.1
@@ -42,6 +43,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
         elif route == "focus":
             self._focus(cam_id)
+        elif route == "order" and not cam_id:
+            self._set_order()
         else:
             self.send_error(404)
 
@@ -64,12 +67,45 @@ class Handler(BaseHTTPRequestHandler):
     def _camera(self, cam_id):
         return self.cameras.get(int(cam_id)) if cam_id.isascii() and cam_id.isdigit() else None
 
+    def _read_form(self):
+        """The POST body as a dict, or None after sending an error.
+
+        The body is a CORS "simple request", so any page could send it from a viewer's browser.
+        Browsers always send Origin on a POST; only accept our own.
+        """
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower():
+            self.send_error(403)
+            return None
+        length = self.headers.get("Content-Length", "0")
+        if not (length.isascii() and length.isdigit() and int(length) <= 1024):
+            self.send_error(400)
+            return None
+        try:
+            return {k: v[0] for k, v in parse_qs(self.rfile.read(int(length)).decode()).items()}
+        except UnicodeDecodeError:
+            self.send_error(400)
+            return None
+
+    def _set_order(self):
+        """Form body order=2,0,1: every camera id, once each."""
+        form = self._read_form()
+        if form is None:
+            return
+        ids = form.get("order", "").split(",")
+        if not all(i.isascii() and i.isdigit() for i in ids) or sorted(map(int, ids)) != sorted(self.cameras):
+            self.send_error(400)
+            return
+        Handler.order = [int(i) for i in ids]
+        self.send_response(204)
+        self.end_headers()
+
     def _index(self):
         if self.cameras:
             figures = "".join(
                 f'<figure data-cam="{i}" data-audio="{1 if cam.audio else 0}">'
                 f'<img src="/stream/{i}" alt="Camera {i}">{focus_bar(cam)}</figure>'
-                for i, cam in self.cameras.items()
+                for i, cam in ((i, self.cameras[i]) for i in self.order or self.cameras)
             )
             body = f"<main>{figures}</main>"
         else:
@@ -158,18 +194,10 @@ class Handler(BaseHTTPRequestHandler):
         controls = self._focus_controls(cam_id)
         if controls is None:
             return
-        # The body is a CORS "simple request", so any page could send it from a viewer's browser.
-        # Browsers always send Origin on a POST; only accept our own.
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower():
-            self.send_error(403)
-            return
-        length = self.headers.get("Content-Length", "0")
-        if not (length.isascii() and length.isdigit() and int(length) <= 1024):
-            self.send_error(400)
+        form = self._read_form()
+        if form is None:
             return
         try:
-            form = {k: v[0] for k, v in parse_qs(self.rfile.read(int(length)).decode()).items()}
             if "auto" in form:
                 if not controls.has_autofocus or form["auto"] not in ("0", "1"):
                     self.send_error(400)
@@ -180,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(400)
                 return
-        except (UnicodeDecodeError, ValueError):
+        except ValueError:
             self.send_error(400)
             return
         except OSError as e:

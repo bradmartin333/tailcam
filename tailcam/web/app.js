@@ -144,7 +144,25 @@ setInterval(async () => {
   polling = false;
 }, 1000);
 
-selected = figs.find(f => f.dataset.cam === "0") || figs[0] || null;
+// Hidden ←/→ keys move the selected feed. The order is saved on the server for every viewer
+// until the container restarts. CSS order is used instead of moving the <img>s, which would
+// restart their streams.
+let saving = Promise.resolve();  // one at a time, so quick presses can't land out of order
+document.addEventListener("keydown", e => {
+  const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+  if (!step || !selected || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.target.closest?.("input")) return;  // the focus slider uses the arrow keys
+  const i = figs.indexOf(selected);
+  const j = i + step;
+  if (j < 0 || j >= figs.length) return;
+  e.preventDefault();
+  [figs[i], figs[j]] = [figs[j], figs[i]];
+  figs.forEach((f, k) => { f.style.order = k; });
+  const order = figs.map(f => f.dataset.cam).join(",");
+  saving = saving.then(() => fetch("/order", { method: "POST", body: new URLSearchParams({ order }) })).catch(() => {});
+});
+
+selected = figs[0] || null;
 render();
 
 // Drop the video streams while the tab is hidden so the server can idle the cameras.
