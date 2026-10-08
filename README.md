@@ -4,7 +4,7 @@ A small MJPEG webcam server for watching the dogs, either over Tailscale or publ
 
 Cameras stay on for as long as the container runs, because switching a webcam on makes it click and flash its LED, which bothers the dogs. Frames are only decoded and encoded while someone is watching, though. Ten seconds (`TAILCAM_IDLE_GRACE`) after the last viewer leaves (or hides the tab), a camera goes idle and its frames are dropped unread. Audio keeps playing while the tab is hidden.
 
-At startup each camera's status LED is switched off. Newer Logitech webcams (the C920 and CrystalCam here) are handled through their vendor extension unit directly, and any other camera whose driver exposes an LED control gets that set to off. The startup log lists every control a camera has, so `docker logs tailcam` shows what yours supports. The LED setting lives in the camera until it's unplugged.
+At startup each camera's status LED is switched off. Newer Logitech webcams (the C920 and CrystalCam here) are handled through their vendor extension unit directly, and any other camera whose driver exposes an LED control gets that set to off. The startup log lists every control a camera has, so `docker logs tailcam` shows what yours supports. The LED setting lives in the camera until it's unplugged. The CrystalCam accepts the setting but ignores it while streaming MJPEG (which tailcam uses, since two cameras in uncompressed YUYV don't fit on one USB hub), so its LED stays on; the C920's goes dark.
 
 Tap a feed to listen to its mic. The page loads with camera 0 selected and muted, because browsers block autoplay. Tap the selected feed to toggle mute, or tap another feed to switch to it. A green outline means the selected feed has audio. Red means that camera has no mic.
 
