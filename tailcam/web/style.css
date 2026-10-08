@@ -1,8 +1,13 @@
 body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; padding: 12px; }
+main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; padding: 12px; align-items: start; }
 figure { margin: 0; background: #000; border-radius: 8px; overflow: hidden; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 figure.sel { box-shadow: 0 0 0 3px #2ecc40; }
 figure.sel.muted { box-shadow: 0 0 0 3px rgba(46, 204, 64, 0.35); }
 figure.sel.noaudio { box-shadow: 0 0 0 3px #e74c3c; }
 img { display: block; width: 100%; height: auto; aspect-ratio: auto 4 / 3; }  /* holds the tile open until the first frame arrives */
+.focus { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 14px; cursor: default; }
+figure:not(.sel) .focus { display: none; }
+.focus input[type=range] { flex: 1; margin: 0; accent-color: #2ecc40; }
+.focus input[type=range]:disabled { opacity: 0.5; }
+.focus label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 p { padding: 12px 16px; margin: 0; }

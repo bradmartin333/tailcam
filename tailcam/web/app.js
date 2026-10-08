@@ -91,6 +91,59 @@ for (const f of figs) {
   });
 }
 
+// Focus: while a drag is in flight only the latest value is sent next, so a slow link
+// (or traefik's rate limit) never builds a queue of stale positions.
+// The selected feed's focus is polled from the server, so the slider follows the lens under
+// autofocus (when it's disabled) and picks up changes made by other viewers.
+const focusBars = new Map();
+for (const f of figs) {
+  const bar = f.querySelector(".focus");
+  if (!bar) continue;
+  bar.addEventListener("click", e => e.stopPropagation());  // don't toggle mute
+  const slider = bar.querySelector("input[type=range]");
+  const af = bar.querySelector(".af");
+  const sync = () => { slider.disabled = !!af?.checked; };
+  let busy = false;
+  let pending = null;
+  let touched = 0;  // last local change; a poll answered around then may predate it
+  async function send(body) {
+    touched = Date.now();
+    if (busy) { pending = body; return; }
+    busy = true;
+    let ok = false;
+    try {
+      ok = (await fetch(`/focus/${f.dataset.cam}`, { method: "POST", body: new URLSearchParams(body) })).ok;
+    } catch {}
+    busy = false;
+    if (!ok) touched = 0;  // not applied: let the next poll show the camera's real state right away
+    if (pending) { const next = pending; pending = null; send(next); }
+  }
+  slider.addEventListener("input", () => send({ value: slider.value }));
+  if (af) af.addEventListener("change", () => { sync(); send({ auto: af.checked ? "1" : "0" }); });
+  sync();
+  focusBars.set(f, { slider, af, sync, isSettled: () => !busy && Date.now() - touched > 1500 });
+}
+
+let polling = false;
+setInterval(async () => {
+  const bar = focusBars.get(selected);
+  if (!bar || document.hidden || polling || !bar.isSettled()) return;
+  polling = true;
+  try {
+    // Time out, or one hung request would leave `polling` set and stop polling for good.
+    const res = await fetch(`/focus/${selected.dataset.cam}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const focus = await res.json();
+      if (bar.isSettled()) {  // the viewer may have moved the slider meanwhile
+        bar.slider.value = focus.value;
+        if (bar.af) bar.af.checked = focus.auto;
+        bar.sync();
+      }
+    }
+  } catch {}
+  polling = false;
+}, 1000);
+
 selected = figs.find(f => f.dataset.cam === "0") || figs[0] || null;
 render();
 
