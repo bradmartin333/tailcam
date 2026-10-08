@@ -161,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
         # The body is a CORS "simple request", so any page could send it from a viewer's browser.
         # Browsers always send Origin on a POST; only accept our own.
         origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+        if origin and urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower():
             self.send_error(403)
             return
         length = self.headers.get("Content-Length", "0")
@@ -170,7 +170,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             form = {k: v[0] for k, v in parse_qs(self.rfile.read(int(length)).decode()).items()}
-            if "auto" in form and controls.has_autofocus:
+            if "auto" in form:
+                if not controls.has_autofocus or form["auto"] not in ("0", "1"):
+                    self.send_error(400)
+                    return
                 controls.set_autofocus(form["auto"] == "1")
             elif "value" in form:
                 controls.set_focus(int(form["value"]))
@@ -198,8 +201,9 @@ def focus_bar(cam):
     try:
         focus = cam.controls.focus()
     except OSError:
-        # Still show the bar; the page polls the real state once it's selected.
-        focus = {**limits, "value": limits["min"], "auto": False if cam.controls.has_autofocus else None}
+        # Still show the bar; the page polls the real state once it's selected. Assume autofocus, which
+        # keeps the slider disabled until then instead of inviting a drag that would switch it off.
+        focus = {**limits, "value": limits["min"], "auto": True if cam.controls.has_autofocus else None}
     auto = ""
     if focus["auto"] is not None:
         checked = " checked" if focus["auto"] else ""

@@ -98,7 +98,7 @@ class Controls:
         self.lock = threading.Lock()
         self.wanted = {}  # cid -> value we've set, reapplied by apply()
         self.fd = None  # kept open between calls (the page polls focus every second); guarded by lock
-        with self._open() as fd:
+        with self._device() as fd:
             self.available = {q.id: q for q in self._enumerate(fd)}
             # Status LEDs aren't a standard V4L2 control. They show up only when the driver or a
             # host-side mapping (uvcdynctrl for Logitech) exposes one, named like "LED1 Mode".
@@ -109,14 +109,6 @@ class Controls:
         except OSError:
             self.logitech_led = None
         self.has_autofocus = CID_FOCUS_AUTO in self.available
-
-    @contextmanager
-    def _open(self):
-        fd = os.open(self.path, os.O_RDWR)
-        try:
-            yield fd
-        finally:
-            os.close(fd)
 
     def _enumerate(self, fd):
         q = QueryCtrl(id=CTRL_FLAG_NEXT_CTRL)
@@ -171,13 +163,17 @@ class Controls:
     def _device(self):
         """The kept-open device fd, with the lock held. An error closes it, so the next call reopens."""
         with self.lock:
-            if self.fd is None:
-                self.fd = os.open(self.path, os.O_RDWR)
             try:
-                yield self.fd
+                yield self._fd()
             except OSError:
                 self._close()
                 raise
+
+    def _fd(self):
+        """The kept-open device fd, opening it if needed. Call with the lock held."""
+        if self.fd is None:
+            self.fd = os.open(self.path, os.O_RDWR)
+        return self.fd
 
     def _close(self):
         if self.fd is not None:
@@ -198,22 +194,23 @@ class Controls:
         Runs under the lock, so a focus change can't land between reading `wanted` and writing it."""
         with self.lock:
             self._close()  # the device may have been re-enumerated since the fd was opened
-        try:
-            with self._device() as fd:
-                # Autofocus first: a manual focus value is refused while autofocus is still on.
-                settings = {**self.leds, **self.wanted}
-                for cid, value in sorted(settings.items(), key=lambda kv: kv[0] != CID_FOCUS_AUTO):
-                    try:
-                        self._write(fd, cid, value)
-                    except OSError as e:
-                        print(f"{self.path}: setting control {cid:#x} failed: {e}", flush=True)
-                if self.logitech_led is not None:
-                    try:
-                        self._logitech_led_off(fd)
-                    except OSError as e:
-                        print(f"{self.path}: turning the Logitech LED off failed: {e}", flush=True)
-        except OSError as e:
-            print(f"{self.path}: can't open to apply controls: {e}", flush=True)
+            try:
+                fd = self._fd()
+            except OSError as e:
+                print(f"{self.path}: can't open to apply controls: {e}", flush=True)
+                return
+            # Autofocus first: a manual focus value is refused while autofocus is still on.
+            settings = {**self.leds, **self.wanted}
+            for cid, value in sorted(settings.items(), key=lambda kv: kv[0] != CID_FOCUS_AUTO):
+                try:
+                    self._write(fd, cid, value)
+                except OSError as e:
+                    print(f"{self.path}: setting control {cid:#x} failed: {e}", flush=True)
+            if self.logitech_led is not None:
+                try:
+                    self._logitech_led_off(fd)
+                except OSError as e:
+                    print(f"{self.path}: turning the Logitech LED off failed: {e}", flush=True)
 
     def focus_limits(self):
         """{min, max, step} of manual focus, or None if the camera can't focus manually."""

@@ -56,6 +56,8 @@ class Camera:
             ok = self.cap.grab()
             if ok and not idle:
                 ok, img = self.cap.retrieve()
+                jpeg = to_jpeg(img) if ok else None
+                ok = jpeg is not None  # unusable frames count as failures, so a bad camera gets reopened
             if not ok:
                 failures += 1
                 time.sleep(0.1)
@@ -71,11 +73,9 @@ class Camera:
             failures = 0
             if idle:
                 continue
-            jpeg = to_jpeg(img)
-            if jpeg:
-                with self.cond:
-                    self.frame = jpeg
-                    self.cond.notify_all()
+            with self.cond:
+                self.frame = jpeg
+                self.cond.notify_all()
 
     def wait_frame(self, last, timeout=5):
         with self.cond:
@@ -96,14 +96,19 @@ def open_capture(index):
 
 
 def to_jpeg(img):
-    """JPEG bytes for a retrieved frame: a raw MJPEG buffer (one row of bytes) or a decoded BGR image."""
-    if img.ndim == 3:
+    """JPEG bytes for a retrieved frame: a raw MJPEG buffer (one row of bytes) or a decoded image."""
+    if img.ndim == 3 or img.shape[0] > 1:  # decoded, color or grayscale
         ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return jpeg.tobytes() if ok else None
     jpeg = img.tobytes()
     if not jpeg.startswith(b"\xff\xd8"):
         return None
-    # Some firmware (the CrystalCam's) leaves off the end-of-image marker; strict decoders want it.
+    if jpeg.endswith(b"\xff\xd9"):
+        return jpeg
+    # Some drivers zero-pad the buffer, and some firmware (the CrystalCam's) leaves off the
+    # end-of-image marker that strict decoders want. A truncated frame looks the same as the
+    # latter and gets through too; telling them apart would mean decoding every frame.
+    jpeg = jpeg.rstrip(b"\0")
     return jpeg if jpeg.endswith(b"\xff\xd9") else jpeg + b"\xff\xd9"
 
 

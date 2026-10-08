@@ -130,7 +130,8 @@ setInterval(async () => {
   if (!bar || document.hidden || polling || !bar.isSettled()) return;
   polling = true;
   try {
-    const res = await fetch(`/focus/${selected.dataset.cam}`, { cache: "no-store" });
+    // Time out, or one hung request would leave `polling` set and stop polling for good.
+    const res = await fetch(`/focus/${selected.dataset.cam}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (res.ok) {
       const focus = await res.json();
       if (bar.isSettled()) {  // the viewer may have moved the slider meanwhile
