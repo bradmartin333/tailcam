@@ -51,8 +51,9 @@ The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker
 |---|---|---|
 | `TAILCAM_PORT` | `8080` | port inside the container |
 | `TAILCAM_MAX_CAMERAS` | `10` | highest device index probed |
-| `TAILCAM_JPEG_QUALITY` | `80` | 0–100 |
-| `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera stops encoding |
+| `TAILCAM_JPEG_QUALITY` | `80` | 0–100, only for cameras that can't send MJPEG (MJPEG frames are passed through as-is) |
+| `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera stops processing frames |
+| `TAILCAM_HOSTS` | (any) | comma-separated `Host` values to answer; others get 403, which blocks DNS rebinding. [`compose.yml`](compose.yml) sets it to the tailnet IP |
 
 ## Local dev
 

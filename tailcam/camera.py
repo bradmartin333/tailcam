@@ -14,8 +14,7 @@ class Camera:
 
     The device stays open and streaming for the container's whole life, because switching a webcam
     on makes it click and flash its LED. Once nobody has watched for IDLE_GRACE seconds, frames are
-    only grabbed (dequeued and dropped), not decoded or encoded, which costs next to no CPU.
-    The grace period covers page reloads.
+    only grabbed (dequeued and dropped), which costs next to no CPU. The grace period covers page reloads.
     """
 
     def __init__(self, index, cap, audio=None, controls=None):
@@ -72,10 +71,10 @@ class Camera:
             failures = 0
             if idle:
                 continue
-            ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-            if ok:
+            jpeg = to_jpeg(img)
+            if jpeg:
                 with self.cond:
-                    self.frame = jpeg.tobytes()
+                    self.frame = jpeg
                     self.cond.notify_all()
 
     def wait_frame(self, last, timeout=5):
@@ -89,7 +88,23 @@ def open_capture(index):
     camera on the same hub fails with "Not enough bandwidth", and with cameras always on both stream at once."""
     cap = cv2.VideoCapture(index)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    # If the camera agreed, hand out its JPEGs as they are instead of decoding and re-encoding every
+    # frame. Elsewhere (YUYV-only cameras, macOS) frames stay decoded and to_jpeg() encodes them.
+    if int(cap.get(cv2.CAP_PROP_FOURCC)) == cv2.VideoWriter_fourcc(*"MJPG"):
+        cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
     return cap
+
+
+def to_jpeg(img):
+    """JPEG bytes for a retrieved frame: a raw MJPEG buffer (one row of bytes) or a decoded BGR image."""
+    if img.ndim == 3:
+        ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        return jpeg.tobytes() if ok else None
+    jpeg = img.tobytes()
+    if not jpeg.startswith(b"\xff\xd8"):
+        return None
+    # Some firmware (the CrystalCam's) leaves off the end-of-image marker; strict decoders want it.
+    return jpeg if jpeg.endswith(b"\xff\xd9") else jpeg + b"\xff\xd9"
 
 
 def detect_cameras():

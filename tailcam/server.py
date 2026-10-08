@@ -5,7 +5,7 @@ from pathlib import Path
 from string import Template
 from urllib.parse import parse_qs, urlsplit
 
-from .config import AUDIO_RATE
+from .config import AUDIO_RATE, HOSTS
 
 BOUNDARY = "frame"
 WEB = Path(__file__).parent / "web"
@@ -20,10 +20,12 @@ class Handler(BaseHTTPRequestHandler):
     cameras = {}
 
     def do_GET(self):
-        if self.path == "/":
-            self._index()
-        elif self.path == "/healthz":
+        if self.path == "/healthz":  # the container's own healthcheck uses 127.0.0.1
             self._send(200, "text/plain", b"ok\n")
+        elif not self._host_allowed():
+            self.send_error(403)
+        elif self.path == "/":
+            self._index()
         elif self.path in STATIC:
             self._send(200, *STATIC[self.path])
         else:
@@ -36,10 +38,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route, cam_id = self._route()
-        if route == "focus":
+        if not self._host_allowed():
+            self.send_error(403)
+        elif route == "focus":
             self._focus(cam_id)
         else:
             self.send_error(404)
+
+    def _host_allowed(self):
+        return not HOSTS or (self.headers.get("Host") or "").lower() in HOSTS
 
     def _route(self):
         """("stream", "0") for /stream/0?t=123."""
@@ -55,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _camera(self, cam_id):
-        return self.cameras.get(int(cam_id)) if cam_id.isdigit() else None
+        return self.cameras.get(int(cam_id)) if cam_id.isascii() and cam_id.isdigit() else None
 
     def _index(self):
         if self.cameras:

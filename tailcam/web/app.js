@@ -110,10 +110,12 @@ for (const f of figs) {
     touched = Date.now();
     if (busy) { pending = body; return; }
     busy = true;
+    let ok = false;
     try {
-      await fetch(`/focus/${f.dataset.cam}`, { method: "POST", body: new URLSearchParams(body) });
+      ok = (await fetch(`/focus/${f.dataset.cam}`, { method: "POST", body: new URLSearchParams(body) })).ok;
     } catch {}
     busy = false;
+    if (!ok) touched = 0;  // not applied: let the next poll show the camera's real state right away
     if (pending) { const next = pending; pending = null; send(next); }
   }
   slider.addEventListener("input", () => send({ value: slider.value }));

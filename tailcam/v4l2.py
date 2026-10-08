@@ -1,6 +1,7 @@
 import ctypes
 import fcntl
 import os
+import re
 import sys
 import threading
 import uuid
@@ -21,6 +22,9 @@ CTRL_TYPE_CTRL_CLASS = 6
 
 CID_FOCUS_ABSOLUTE = 0x009A090A
 CID_FOCUS_AUTO = 0x009A090C
+
+# On/off-style LED controls, e.g. "LED1 Mode" or "Privacy LED", but not "LED1 Frequency" or "Enabled".
+LED_NAME = re.compile(rb"\bLED\d*( Mode)?$", re.I)
 
 # UVC extension unit access, for vendor controls the driver doesn't map to V4L2 controls.
 UVC_SET_CUR = 0x01
@@ -74,11 +78,11 @@ def extension_units(index):
     units = {}
     video_control = False
     i = 0
-    while i + 2 <= len(d) and d[i]:
+    while i + 2 <= len(d) and d[i] and i + d[i] <= len(d):  # stop at a truncated descriptor
         if d[i + 1] == 0x04 and d[i] >= 9:
             # INTERFACE: class 0x0e (video), subclass 0x01 (control). Audio units also use subtype 0x06.
             video_control = d[i + 5] == 0x0E and d[i + 6] == 0x01
-        elif video_control and d[i + 1] == 0x24 and d[i + 2] == 0x06 and d[i] >= 24 and i + 20 <= len(d):
+        elif video_control and d[i + 1] == 0x24 and d[i + 2] == 0x06 and d[i] >= 24:
             # CS_INTERFACE / VC_EXTENSION_UNIT: bLength, type, subtype, bUnitID, guidExtensionCode[16], ...
             units[uuid.UUID(bytes_le=d[i + 4:i + 20])] = d[i + 3]
         i += d[i]
@@ -93,11 +97,12 @@ class Controls:
         self.path = f"/dev/video{index}"
         self.lock = threading.Lock()
         self.wanted = {}  # cid -> value we've set, reapplied by apply()
+        self.fd = None  # kept open between calls (the page polls focus every second); guarded by lock
         with self._open() as fd:
             self.available = {q.id: q for q in self._enumerate(fd)}
             # Status LEDs aren't a standard V4L2 control. They show up only when the driver or a
             # host-side mapping (uvcdynctrl for Logitech) exposes one, named like "LED1 Mode".
-            self.leds = {cid: self._off_value(fd, q) for cid, q in self.available.items() if b"led" in q.name.lower()}
+            self.leds = {cid: self._off_value(fd, q) for cid, q in self.available.items() if LED_NAME.search(q.name)}
         # Without such a mapping, Logitech LEDs are still reachable through the extension unit directly.
         try:
             self.logitech_led = extension_units(index).get(LOGITECH_PERIPHERAL)
@@ -162,23 +167,42 @@ class Controls:
         fcntl.ioctl(fd, VIDIOC_G_CTRL, c)
         return c.value
 
-    def _set(self, *settings):
-        """Write (cid, value) pairs in order through one open of the device, and remember them."""
+    @contextmanager
+    def _device(self):
+        """The kept-open device fd, with the lock held. An error closes it, so the next call reopens."""
         with self.lock:
-            with self._open() as fd:
-                for cid, value in settings:
-                    self._write(fd, cid, value)
-                    self.wanted[cid] = value
+            if self.fd is None:
+                self.fd = os.open(self.path, os.O_RDWR)
+            try:
+                yield self.fd
+            except OSError:
+                self._close()
+                raise
+
+    def _close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+    def _set(self, *settings, forget=()):
+        """Write (cid, value) pairs in order and remember them; forget drops other remembered cids."""
+        with self._device() as fd:
+            for cid, value in settings:
+                self._write(fd, cid, value)
+                self.wanted[cid] = value
+            for cid in forget:
+                self.wanted.pop(cid, None)
 
     def apply(self):
-        """Turn the LEDs off and reapply every value set so far, e.g. after the device was reopened."""
+        """Turn the LEDs off and reapply every value set so far, e.g. after the device was reopened.
+        Runs under the lock, so a focus change can't land between reading `wanted` and writing it."""
         with self.lock:
-            settings = {**self.leds, **self.wanted}
-        # Autofocus first: a manual focus value is refused while autofocus is still on.
-        order = sorted(settings.items(), key=lambda kv: kv[0] != CID_FOCUS_AUTO)
+            self._close()  # the device may have been re-enumerated since the fd was opened
         try:
-            with self._open() as fd:
-                for cid, value in order:
+            with self._device() as fd:
+                # Autofocus first: a manual focus value is refused while autofocus is still on.
+                settings = {**self.leds, **self.wanted}
+                for cid, value in sorted(settings.items(), key=lambda kv: kv[0] != CID_FOCUS_AUTO):
                     try:
                         self._write(fd, cid, value)
                     except OSError as e:
@@ -199,7 +223,7 @@ class Controls:
     def focus(self):
         """focus_limits() plus the current value and autofocus state (None without autofocus).
         Only call when focus_limits() isn't None; raises OSError if the device can't be read."""
-        with self._open() as fd:
+        with self._device() as fd:
             value = self._read(fd, CID_FOCUS_ABSOLUTE)
             auto = bool(self._read(fd, CID_FOCUS_AUTO)) if self.has_autofocus else None
         return {**self.focus_limits(), "value": value, "auto": auto}
@@ -211,10 +235,8 @@ class Controls:
         self._set(*([(CID_FOCUS_AUTO, 0)] if self.has_autofocus else []), (CID_FOCUS_ABSOLUTE, value))
 
     def set_autofocus(self, on):
-        self._set((CID_FOCUS_AUTO, 1 if on else 0))
-        if on:
-            with self.lock:
-                self.wanted.pop(CID_FOCUS_ABSOLUTE, None)  # don't reapply a stale manual value over autofocus
+        # Turning autofocus on forgets the manual value, so a reopen doesn't reapply it over autofocus.
+        self._set((CID_FOCUS_AUTO, 1 if on else 0), forget=[CID_FOCUS_ABSOLUTE] if on else [])
 
 
 def controls_for(index):
