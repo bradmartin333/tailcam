@@ -93,12 +93,15 @@ for (const f of figs) {
 
 // Focus: while a drag is in flight only the latest value is sent next, so a slow link
 // (or traefik's rate limit) never builds a queue of stale positions.
+// While autofocus is on the slider is disabled and follows the lens, polled from the server.
+const focusBars = new Map();
 for (const f of figs) {
   const bar = f.querySelector(".focus");
   if (!bar) continue;
   bar.addEventListener("click", e => e.stopPropagation());  // don't toggle mute
   const slider = bar.querySelector("input[type=range]");
   const af = bar.querySelector(".af");
+  const sync = () => { slider.disabled = !!af?.checked; };
   let busy = false;
   let pending = null;
   async function send(body) {
@@ -110,12 +113,30 @@ for (const f of figs) {
     busy = false;
     if (pending) { const next = pending; pending = null; send(next); }
   }
-  slider.addEventListener("input", () => {
-    if (af) af.checked = false;  // the server turns autofocus off for a manual value
-    send({ value: slider.value });
-  });
-  if (af) af.addEventListener("change", () => send({ auto: af.checked ? "1" : "0" }));
+  slider.addEventListener("input", () => send({ value: slider.value }));
+  if (af) af.addEventListener("change", () => { sync(); send({ auto: af.checked ? "1" : "0" }); });
+  sync();
+  focusBars.set(f, { slider, af, sync, isBusy: () => busy });
 }
+
+let polling = false;
+setInterval(async () => {
+  const bar = focusBars.get(selected);
+  if (!bar?.af?.checked || document.hidden || polling || bar.isBusy()) return;
+  polling = true;
+  try {
+    const res = await fetch(`/focus/${selected.dataset.cam}`, { cache: "no-store" });
+    if (res.ok) {
+      const focus = await res.json();
+      if (bar.af.checked && !bar.isBusy()) {  // the viewer may have unticked auto meanwhile
+        bar.slider.value = focus.value;
+        bar.af.checked = focus.auto;
+        bar.sync();
+      }
+    }
+  } catch {}
+  polling = false;
+}, 1000);
 
 selected = figs.find(f => f.dataset.cam === "0") || figs[0] || null;
 render();

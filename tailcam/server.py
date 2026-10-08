@@ -1,3 +1,4 @@
+import json
 import queue
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -29,6 +30,8 @@ class Handler(BaseHTTPRequestHandler):
             self._stream(self.path[len("/stream/"):].split("?", 1)[0])
         elif self.path.startswith("/audio/"):
             self._audio(self.path[len("/audio/"):].split("?", 1)[0])
+        elif self.path.startswith("/focus/"):
+            self._focus_state(self.path[len("/focus/"):].split("?", 1)[0])
         else:
             self.send_error(404)
 
@@ -117,6 +120,15 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             cam.audio.unsubscribe(q)
+
+    def _focus_state(self, cam_id):
+        """Current focus as JSON; under autofocus, value is wherever the camera has moved the lens."""
+        cam = self._camera(cam_id)
+        focus = cam.controls.focus() if cam and cam.controls else None
+        if focus is None:
+            self.send_error(404, "Focus control not found")
+            return
+        self._send(200, "application/json", json.dumps(focus).encode())
 
     def _focus(self, cam_id):
         """Form body with either value=<n> (manual focus) or auto=0|1."""

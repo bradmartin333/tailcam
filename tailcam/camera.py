@@ -64,7 +64,7 @@ class Camera:
                     print(f"camera {self.index}: no frames, reopening", flush=True)
                     self.cap.release()
                     time.sleep(2)
-                    self.cap = cv2.VideoCapture(self.index)
+                    self.cap = open_capture(self.index)
                     if self.controls:
                         self.controls.apply()
                     failures = 0
@@ -84,11 +84,19 @@ class Camera:
             return self.frame
 
 
+def open_capture(index):
+    """Ask for MJPEG. Uncompressed YUYV makes Logitech webcams reserve most of a USB 2.0 bus, so a second
+    camera on the same hub fails with "Not enough bandwidth", and with cameras always on both stream at once."""
+    cap = cv2.VideoCapture(index)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    return cap
+
+
 def detect_cameras():
     find_audio = audio_finder(sys.platform)
     cameras = {}
     for i in range(MAX_CAMERAS):
-        cap = cv2.VideoCapture(i)
+        cap = open_capture(i)
         # Many USB webcams expose a second metadata-only /dev/video node; reading a frame filters those out.
         if cap.isOpened() and cap.read()[0]:
             audio = find_audio(i)
