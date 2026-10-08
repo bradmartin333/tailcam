@@ -8,7 +8,7 @@ At startup each camera's status LED is switched off. Newer Logitech webcams (the
 
 Tap a feed to listen to its mic. The page loads with camera 0 selected and muted, because browsers block autoplay. Tap the selected feed to toggle mute, or tap another feed to switch to it. A green outline means the selected feed has audio. Red means that camera has no mic.
 
-If the selected camera supports manual focus, a slider under its feed sets it. Moving the slider turns autofocus off, and the "auto" box turns it back on. The setting lasts until the container restarts.
+If the selected camera supports manual focus, a slider under its feed sets it. While the "auto" box is ticked the slider is disabled and follows wherever autofocus has moved the lens; untick it to focus by hand. The setting lasts until the container restarts.
 
 ## Run it
 
@@ -42,7 +42,7 @@ The homelab runs it this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/docker
 | `/` | grid of all cameras |
 | `/stream/<n>` | MJPEG stream for camera index `n` |
 | `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic (404 if it has none) |
-| `POST /focus/<n>` | form body `value=<n>` for manual focus, or `auto=0`/`auto=1` (404 if the camera can't focus) |
+| `/focus/<n>` | current focus as JSON (`GET`), or set it (`POST`) with form body `value=<n>` for manual focus, or `auto=0`/`auto=1` (404 if the camera can't focus) |
 | `/healthz` | liveness check |
 
 ## Configuration
