@@ -9,6 +9,6 @@ IDLE_GRACE = int(os.environ.get("TAILCAM_IDLE_GRACE", "10"))
 # Comma-separated Host headers to answer, e.g. "100.64.0.5:8555"; anything else gets a 403. This stops a
 # DNS-rebinding page from reaching the cameras through a viewer's browser. Unset answers any Host.
 HOSTS = {h.strip().lower() for h in os.environ.get("TAILCAM_HOSTS", "").split(",") if h.strip()}
-# 1 switches each camera's status LED off at startup. 0 sets it back to the camera's default (usually lit
+# 1 switches each camera's status LED off at startup. 0 (or false/off/no) sets it back to the camera's default (usually lit
 # while streaming); just leaving it alone would keep a Logitech LED off from an earlier run until replugged.
-LED_OFF = os.environ.get("TAILCAM_LED_OFF", "1") != "0"
+LED_OFF = os.environ.get("TAILCAM_LED_OFF", "1").strip().lower() not in ("0", "false", "off", "no")

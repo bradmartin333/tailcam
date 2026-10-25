@@ -1,0 +1,22 @@
+# Runs tailcam from this checkout; see the README ("Door sensor"). Edit User= and the paths to match
+# your checkout, then:
+#   sudo cp rpi/tailcam.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+# Then either enable it to run all the time (sudo systemctl enable --now tailcam.service), or leave it
+# disabled and let tailcam-gate.service start and stop it.
+[Unit]
+Description=tailcam webcam server
+
+[Service]
+# idle waits for the rest of boot, which gives the USB webcams time to show up: tailcam looks for
+# cameras only once, at startup. No After=multi-user.target, which would be an ordering cycle with
+# WantedBy= below.
+Type=idle
+ExecStart=/bin/sh /home/brad/tailcam/run.sh
+WorkingDirectory=/home/brad/tailcam
+User=brad
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

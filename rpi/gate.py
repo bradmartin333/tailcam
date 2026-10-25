@@ -20,6 +20,7 @@ UNIT = "tailcam.service"
 # Set in tailcam-gate.service, not tailcam's .env: they're the gate's settings, not the app's.
 PIN = int(os.environ.get("TAILCAM_GATE_PIN", "17"))  # BCM number, e.g. 17 is physical pin 11
 SETTLE = float(os.environ.get("TAILCAM_GATE_SETTLE", "2"))
+RETRY = 30  # seconds between attempts after a start or stop fails
 # Kernel-side debounce, which drops a reed switch's contact bounce and short noise spikes on a long wire
 # before they wake us. The settle time above handles anything slower.
 DEBOUNCE_US = 20_000
@@ -134,22 +135,31 @@ class Line:
 
 
 def systemctl(verb):
-    result = subprocess.run(["systemctl", verb, UNIT], capture_output=True, text=True)
+    """Run `systemctl <verb> UNIT`, logging anything it says on stderr (e.g. a daemon-reload warning).
+    True if it worked."""
+    result = subprocess.run(["systemctl", verb, UNIT], stderr=subprocess.PIPE, text=True)
+    err = result.stderr.strip()
     if result.returncode:
-        print(f"gate: systemctl {verb} {UNIT} failed: {result.stderr.strip()}", flush=True)
+        print(f"gate: systemctl {verb} {UNIT} failed (exit {result.returncode}): {err or 'no message'}", flush=True)
+    elif err:
+        print(f"gate: systemctl {verb} {UNIT}: {err}", flush=True)
+    return result.returncode == 0
 
 
-def run(line, settle, systemctl):
-    """Start or stop the service to match the pin, then sleep until it has changed and settled. Starting a
-    running service or stopping a stopped one does nothing, so this is safe to repeat, and it also puts back
-    a service someone stopped by hand. Edges that arrive while systemctl runs wake the next wait() at once."""
+def run(line, settle, control):
+    """Start or stop the service to match the pin (`control` is systemctl, or a fake in tests), then sleep
+    until the pin has changed and settled. Starting a running service or stopping a stopped one does
+    nothing, so this is safe to repeat. A failed start or stop is retried every RETRY seconds; otherwise
+    nothing happens until the door moves, so a service stopped by hand stays stopped until then (and
+    tailcam.service's own Restart= covers crashes). Edges that arrive while systemctl runs wake the next
+    wait() at once."""
     while True:
         closed = line.closed()
         print(f"gate: circuit {'closed, starting' if closed else 'open, stopping'} {UNIT}", flush=True)
-        systemctl("start" if closed else "stop")
-        line.wait()
-        while line.wait(settle):
-            pass
+        ok = control("start" if closed else "stop")
+        if line.wait(None if ok else RETRY):
+            while line.wait(settle):
+                pass
 
 
 def main():

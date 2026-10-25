@@ -32,6 +32,7 @@ LED_NAME = re.compile(rb"\bLED\d*( Mode)?$", re.I)
 UVC_SET_CUR = 0x01
 UVC_GET_CUR = 0x81
 UVC_GET_LEN = 0x85
+UVC_GET_DEF = 0x87
 
 # Newer Logitech webcams (C920, CrystalCam, ...) keep the status LED in their "peripheral" extension
 # unit, the one libwebcam/uvcdynctrl maps as "LED1 Mode". Selector 9 is 5 bytes and byte 1 is the
@@ -39,7 +40,6 @@ UVC_GET_LEN = 0x85
 LOGITECH_PERIPHERAL = uuid.UUID("ffe52d21-8030-4e2c-82d9-f587d00540bd")
 LOGITECH_LED = 9
 LOGITECH_LED_LEN = 5
-LOGITECH_LED_MODE = 0 if LED_OFF else 3
 
 
 class QueryCtrl(ctypes.Structure):
@@ -147,9 +147,13 @@ class Controls:
         if int.from_bytes(bytes(length), "little") != LOGITECH_LED_LEN:
             raise OSError(f"unexpected LED control size {bytes(length).hex()}")
         led = (ctypes.c_uint8 * LOGITECH_LED_LEN)()
+        mode = 0
+        if not LED_OFF:
+            xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_GET_DEF, led)
+            mode = led[1]
         xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_GET_CUR, led)
-        if led[1] != LOGITECH_LED_MODE:
-            led[1] = LOGITECH_LED_MODE
+        if led[1] != mode:
+            led[1] = mode
             xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_SET_CUR, led)
 
     def names(self):
