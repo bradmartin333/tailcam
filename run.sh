@@ -1,2 +1,2 @@
 #!/bin/sh
-uv run --with-requirements requirements.txt -m tailcam
+/home/brad/.local/bin/uv run --with-requirements requirements.txt -m tailcam
