@@ -16,5 +16,6 @@ services:
       # Only answer requests addressed to the tailnet IP (blocks DNS rebinding). Add any other name you
       # browse to, comma-separated, e.g. "${TAILSCALE_IP}:8555,box.tail1234.ts.net:8555".
       TAILCAM_HOSTS: "${TAILSCALE_IP}:8555"
+      TAILCAM_LED_OFF: "${TAILCAM_LED_OFF:-1}"
     ports:
       - "${TAILSCALE_IP:?set TAILSCALE_IP to the box's tailnet IP (tailscale ip -4)}:8555:8080"

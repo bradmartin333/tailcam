@@ -7,6 +7,8 @@ import threading
 import uuid
 from contextlib import contextmanager
 
+from .config import LED_OFF
+
 # Linux-only V4L2 control access via ioctl, so the image needs no v4l-utils. Elsewhere (macOS dev)
 # controls_for() returns None and the page simply shows no controls.
 
@@ -30,6 +32,7 @@ LED_NAME = re.compile(rb"\bLED\d*( Mode)?$", re.I)
 UVC_SET_CUR = 0x01
 UVC_GET_CUR = 0x81
 UVC_GET_LEN = 0x85
+UVC_GET_DEF = 0x87
 
 # Newer Logitech webcams (C920, CrystalCam, ...) keep the status LED in their "peripheral" extension
 # unit, the one libwebcam/uvcdynctrl maps as "LED1 Mode". Selector 9 is 5 bytes and byte 1 is the
@@ -102,7 +105,8 @@ class Controls:
             self.available = {q.id: q for q in self._enumerate(fd)}
             # Status LEDs aren't a standard V4L2 control. They show up only when the driver or a
             # host-side mapping (uvcdynctrl for Logitech) exposes one, named like "LED1 Mode".
-            self.leds = {cid: self._off_value(fd, q) for cid, q in self.available.items() if LED_NAME.search(q.name)}
+            self.leds = {cid: self._off_value(fd, q) if LED_OFF else q.default_value
+                         for cid, q in self.available.items() if LED_NAME.search(q.name)}
         # Without such a mapping, Logitech LEDs are still reachable through the extension unit directly.
         try:
             self.logitech_led = extension_units(index).get(LOGITECH_PERIPHERAL)
@@ -137,15 +141,19 @@ class Controls:
     def has_led(self):
         return bool(self.leds) or self.logitech_led is not None
 
-    def _logitech_led_off(self, fd):
+    def _set_logitech_led(self, fd):
         length = (ctypes.c_uint8 * 2)()
         xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_GET_LEN, length)
         if int.from_bytes(bytes(length), "little") != LOGITECH_LED_LEN:
             raise OSError(f"unexpected LED control size {bytes(length).hex()}")
         led = (ctypes.c_uint8 * LOGITECH_LED_LEN)()
+        mode = 0
+        if not LED_OFF:
+            xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_GET_DEF, led)
+            mode = led[1]
         xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_GET_CUR, led)
-        if led[1] != 0:
-            led[1] = 0
+        if led[1] != mode:
+            led[1] = mode
             xu_query(fd, self.logitech_led, LOGITECH_LED, UVC_SET_CUR, led)
 
     def names(self):
@@ -190,7 +198,7 @@ class Controls:
                 self.wanted.pop(cid, None)
 
     def apply(self):
-        """Turn the LEDs off and reapply every value set so far, e.g. after the device was reopened.
+        """Set the LEDs (off, or back to default with TAILCAM_LED_OFF=0) and reapply every value set so far, e.g. after the device was reopened.
         Runs under the lock, so a focus change can't land between reading `wanted` and writing it."""
         with self.lock:
             self._close()  # the device may have been re-enumerated since the fd was opened
@@ -208,9 +216,9 @@ class Controls:
                     print(f"{self.path}: setting control {cid:#x} failed: {e}", flush=True)
             if self.logitech_led is not None:
                 try:
-                    self._logitech_led_off(fd)
+                    self._set_logitech_led(fd)
                 except OSError as e:
-                    print(f"{self.path}: turning the Logitech LED off failed: {e}", flush=True)
+                    print(f"{self.path}: setting the Logitech LED failed: {e}", flush=True)
 
     def focus_limits(self):
         """{min, max, step} of manual focus, or None if the camera can't focus manually."""
