@@ -176,3 +176,28 @@ function syncStreams() {
 }
 document.addEventListener("visibilitychange", syncStreams);
 if (document.hidden) syncStreams();  // opened in a background tab
+
+// When the server goes away (e.g. the Pi's door gate stops it), an <img> keeps its last frame and
+// looks live. Grey the feeds out instead. A restarted server has new streams and maybe new cameras,
+// so stay greyed once it's back and ask for a refresh rather than reconnecting.
+const status = document.createElement("div");
+status.id = "status";
+document.body.append(status);
+let failures = 0;
+let checking = false;
+setInterval(async () => {
+  if (document.hidden || checking) return;
+  checking = true;
+  let ok = false;
+  try {
+    ok = (await fetch("/healthz", { cache: "no-store", signal: AbortSignal.timeout(3000) })).ok;
+  } catch {}
+  checking = false;
+  failures = ok ? 0 : failures + 1;
+  if (failures >= 2) {  // one slow answer on a bad link isn't an outage
+    document.body.classList.add("offline");
+    status.textContent = "Offline";
+  } else if (ok && document.body.classList.contains("offline")) {
+    status.textContent = "Back online — refresh to reconnect";
+  }
+}, 3000);

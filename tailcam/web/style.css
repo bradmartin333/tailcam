@@ -11,3 +11,6 @@ figure:not(.sel) .focus { display: none; }
 .focus input[type=range]:disabled { opacity: 0.5; }
 .focus label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 p { padding: 12px 16px; margin: 0; }
+#status { display: none; position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 8px; background: #333; font-size: 14px; white-space: nowrap; }
+body.offline #status { display: block; }
+body.offline main { filter: grayscale(1) brightness(0.4); }
