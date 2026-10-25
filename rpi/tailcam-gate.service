@@ -1,5 +1,5 @@
 # Starts and stops tailcam.service to follow the door sensor; see the README ("Door sensor"). Install it
-# with rpi/install.sh, which fills in the @...@ values. To change the settings below, use
+# with rpi/install.sh. To change the settings below, use
 # `sudo systemctl edit tailcam-gate.service`, which keeps them when install.sh is rerun.
 [Unit]
 Description=Run tailcam only while the door sensor's circuit is closed
@@ -11,7 +11,8 @@ StartLimitBurst=3
 [Service]
 Environment=TAILCAM_GATE_PIN=17
 Environment=TAILCAM_GATE_SETTLE=2
-ExecStart=python3 "@DIR@/rpi/gate.py"
+# install.sh copies gate.py here, root-owned. -I keeps Python from importing anything from elsewhere.
+ExecStart=python3 -I /usr/local/lib/tailcam/gate.py
 Restart=on-failure
 RestartSec=5
 

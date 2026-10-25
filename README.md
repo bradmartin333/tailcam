@@ -65,7 +65,9 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 
 ## Door sensor (Raspberry Pi)
 
-On a Pi, tailcam can run without Docker as [`rpi/tailcam.service`](rpi/tailcam.service), which runs `run.sh`. [`rpi/gate.py`](rpi/gate.py) can then run it only while a door sensor's circuit is closed. It sleeps until the pin changes, so it uses no CPU. It also waits for the pin to hold steady for `TAILCAM_GATE_SETTLE` seconds before reading it, so a door that opens and closes quickly causes at most one start or stop. It needs only `python3`.
+On a Pi, tailcam can run without Docker as [`rpi/tailcam.service`](rpi/tailcam.service), which runs `run.sh`. It needs a 64-bit OS, because OpenCV has no 32-bit ARM build on PyPI, and `ffmpeg` for audio (`sudo apt install ffmpeg`). Run this way, it answers on every network interface at port 8080, so anyone on the same network can watch without joining the tailnet. Set `TAILCAM_HOSTS` in `.env` to limit which addresses it answers to.
+
+[`rpi/gate.py`](rpi/gate.py) can then run it only while a door sensor's circuit is closed. It sleeps until the pin changes, so it uses no CPU. It also waits for the pin to hold steady for `TAILCAM_GATE_SETTLE` seconds before reading it, so a door that opens and closes quickly causes at most one start or stop. It needs only `python3`.
 
 Wire the sensor between a GPIO (BCM 17, physical pin 11, by default) and ground. The gate turns on the Pi's internal pull-up, so the pin reads closed while the sensor pulls it low. That suits a reed switch or a bare open-collector hall sensor such as the A3144, and neither needs a resistor. Power a hall sensor from 5 V if its datasheet requires it (the A3144 needs 4.5 V), since its output only ever sinks to ground. A breakout board with its own pull-up resistor or LED is different: it pulls the output up to its supply, so power it from 3.3 V, never 5 V.
 
@@ -78,7 +80,7 @@ rpi/install.sh gate     # run tailcam only while the circuit is closed
 rpi/install.sh always   # run it all the time, without the sensor
 ```
 
-Rerun it to switch modes, or after moving the checkout or reinstalling `uv`. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
+Rerun it after a `git pull`, since the gate runs from a root-owned copy in `/usr/local/lib/tailcam`. Also rerun it to switch modes, or after moving the checkout or reinstalling `uv`. It stops if the OS is 32-bit or the checkout path has unusual characters, and warns if `ffmpeg` is missing. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
 
 ## Local dev
 

@@ -92,7 +92,10 @@ def find_line(name):
             fcntl.ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, chip)
             for offset in range(chip.lines):
                 info = LineInfo(offset=offset)
-                fcntl.ioctl(fd, GPIO_V2_GET_LINEINFO_IOCTL, info)
+                try:
+                    fcntl.ioctl(fd, GPIO_V2_GET_LINEINFO_IOCTL, info)
+                except OSError as e:
+                    raise SystemExit(f"gate: can't read {path}'s lines ({e}); the gate needs Linux 5.10 or newer")
                 if info.name == name:
                     return path, offset
         finally:

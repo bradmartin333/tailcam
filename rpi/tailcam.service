@@ -11,6 +11,8 @@ Type=idle
 ExecStart=/bin/sh "@DIR@/run.sh"
 WorkingDirectory=@DIR@
 User=@USER@
+# To open the cameras and their mics, even if @USER@ isn't in these groups.
+SupplementaryGroups=video audio
 # systemd's PATH leaves out ~/.local/bin, where uv's installer puts it.
 Environment="UV=@UV@"
 Restart=always
