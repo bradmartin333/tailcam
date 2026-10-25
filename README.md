@@ -71,7 +71,14 @@ Wire the sensor between a GPIO (BCM 17, physical pin 11, by default) and ground.
 
 If a start or stop fails, the gate tries again every 30 seconds. If you stop tailcam by hand, it stays stopped until the door next moves.
 
-Install `rpi/tailcam.service` first, then the gate, using the steps at the top of each file. [`rpi/tailcam-gate.service`](rpi/tailcam-gate.service) also holds the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`). To run tailcam without the sensor, disable the gate and enable `tailcam.service` again.
+Install both units from the checkout as the user tailcam should run as, not with `sudo`. [`rpi/install.sh`](rpi/install.sh) fills in the checkout path, your user and `uv`'s location, and asks for `sudo` itself:
+
+```sh
+rpi/install.sh gate     # run tailcam only while the circuit is closed
+rpi/install.sh always   # run it all the time, without the sensor
+```
+
+Rerun it to switch modes, or after moving the checkout or reinstalling `uv`. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
 
 ## Local dev
 

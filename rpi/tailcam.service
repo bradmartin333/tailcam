@@ -1,9 +1,5 @@
-# Runs tailcam from this checkout; see the README ("Door sensor"). Edit User= and the paths to match
-# your checkout, then:
-#   sudo cp rpi/tailcam.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-# Then either enable it to run all the time (sudo systemctl enable --now tailcam.service), or leave it
-# disabled and let tailcam-gate.service start and stop it.
+# Runs tailcam from this checkout; see the README ("Door sensor"). Install it with rpi/install.sh,
+# which fills in the @...@ values.
 [Unit]
 Description=tailcam webcam server
 
@@ -12,9 +8,11 @@ Description=tailcam webcam server
 # cameras only once, at startup. No After=multi-user.target, which would be an ordering cycle with
 # WantedBy= below.
 Type=idle
-ExecStart=/bin/sh /home/brad/tailcam/run.sh
-WorkingDirectory=/home/brad/tailcam
-User=brad
+ExecStart=/bin/sh "@DIR@/run.sh"
+WorkingDirectory=@DIR@
+User=@USER@
+# systemd's PATH leaves out ~/.local/bin, where uv's installer puts it.
+Environment="UV=@UV@"
 Restart=always
 RestartSec=5
 
