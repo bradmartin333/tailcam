@@ -12,7 +12,7 @@ Description=Run tailcam only while the door sensor's circuit is closed
 [Service]
 Environment=TAILCAM_GATE_PIN=17
 Environment=TAILCAM_GATE_SETTLE=2
-ExecStart=/usr/bin/python3 /home/pi/tailcam/rpi/gate.py
+ExecStart=/usr/bin/python3 /home/brad/tailcam/rpi/gate.py
 Restart=on-failure
 RestartSec=5
 
