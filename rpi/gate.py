@@ -134,7 +134,9 @@ class Line:
 
 
 def systemctl(verb):
-    subprocess.run(["systemctl", verb, UNIT], check=False)
+    result = subprocess.run(["systemctl", verb, UNIT], capture_output=True, text=True)
+    if result.returncode:
+        print(f"gate: systemctl {verb} {UNIT} failed: {result.stderr.strip()}", flush=True)
 
 
 def run(line, settle, systemctl):
