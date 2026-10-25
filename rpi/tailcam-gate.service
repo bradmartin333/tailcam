@@ -1,0 +1,20 @@
+# Starts and stops tailcam.service to follow the door sensor; see the README ("Door sensor").
+# Edit the path to point at your checkout, then:
+#   sudo cp rpi/tailcam-gate.service /etc/systemd/system/
+#   sudo systemctl disable --now tailcam.service   # the gate starts it now, not boot
+#   sudo systemctl enable --now tailcam-gate.service
+# To run without the sensor, swap them back:
+#   sudo systemctl disable --now tailcam-gate.service
+#   sudo systemctl enable --now tailcam.service
+[Unit]
+Description=Run tailcam only while the door sensor's circuit is closed
+
+[Service]
+Environment=TAILCAM_GATE_PIN=17
+Environment=TAILCAM_GATE_SETTLE=2
+ExecStart=/usr/bin/python3 /home/pi/tailcam/rpi/gate.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

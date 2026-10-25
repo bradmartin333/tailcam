@@ -4,7 +4,7 @@ A small MJPEG webcam server for watching the dogs, either over Tailscale or publ
 
 Cameras stay on while the container runs, because a webcam clicks and flashes its LED when it switches on, and that bothers the dogs. Frames are only sent while someone is watching. Ten seconds (`TAILCAM_IDLE_GRACE`) after the last viewer leaves or hides the tab, a camera goes idle and drops its frames. Audio keeps playing while the tab is hidden.
 
-At startup, tailcam switches off each camera's status LED. Newer Logitech webcams, such as the C920 and CrystalCam, are handled through their vendor extension unit. Any other camera whose driver exposes an LED control has that control set to off. The startup log lists each camera's controls, so `docker logs tailcam` shows what yours supports.
+At startup, tailcam switches off each camera's status LED, or sets it back to the camera's default with `TAILCAM_LED_OFF=0`. Newer Logitech webcams, such as the C920 and CrystalCam, are handled through their vendor extension unit. Any other camera whose driver exposes an LED control has that control set to off. The startup log lists each camera's controls, so `docker logs tailcam` shows what yours supports.
 
 ## Using the page
 
@@ -59,6 +59,17 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `TAILCAM_JPEG_QUALITY` | `80` | 0–100, for cameras that can't send MJPEG (MJPEG frames pass through unchanged) |
 | `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera goes idle |
 | `TAILCAM_HOSTS` | any | comma-separated `Host` values to answer; others get a 403, which blocks DNS rebinding. [`compose.yml`](compose.yml) sets it to the tailnet IP |
+| `TAILCAM_LED_OFF` | `1` | `1` turns status LEDs off; `0` sets them back to the camera's default (usually lit while streaming) |
+
+[`run.sh`](run.sh) loads these from a `.env` beside it, and [`compose.yml`](compose.yml) passes `TAILCAM_LED_OFF` through from its `.env`.
+
+## Door sensor (Raspberry Pi)
+
+When tailcam runs on a Pi from `run.sh` as `tailcam.service`, [`rpi/gate.py`](rpi/gate.py) can run it only while a door sensor's circuit is closed. It sleeps until the pin changes, so it uses no CPU. It also waits for the pin to hold steady for `TAILCAM_GATE_SETTLE` seconds before reading it, so a door that opens and closes quickly causes at most one start or stop. It needs only `python3`.
+
+Wire the sensor between a GPIO (BCM 17, physical pin 11, by default) and ground. The gate turns on the Pi's internal pull-up, so the pin reads closed while the sensor pulls it low. That suits a reed switch or a bare open-collector hall sensor such as the A3144, and neither needs a resistor. Power a hall sensor from 5 V if its datasheet requires it (the A3144 needs 4.5 V), since its output only ever sinks to ground. A breakout board with its own pull-up resistor or LED is different: it pulls the output up to its supply, so power it from 3.3 V, never 5 V.
+
+Install it with the steps at the top of [`rpi/tailcam-gate.service`](rpi/tailcam-gate.service), which also holds the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`). To run tailcam without the sensor, disable the gate and enable `tailcam.service` again.
 
 ## Local dev
 
