@@ -1,0 +1,7 @@
+# Keeps USB webcams out of USB autosuspend; rpi/install.sh installs it into /etc/udev/rules.d.
+# While tailcam is stopped (the door is open), the kernel suspends an idle camera after 2 s. tailcam reads
+# each camera's first frame only once, at startup, and a camera still waking up can miss that read, so it
+# stays missing until tailcam next restarts. This matches any UVC camera's video interface (class 0e) and
+# turns autosuspend off on the USB device it belongs to (the interface's parent), whatever port it's on.
+ACTION!="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="0e", \
+    RUN+="/bin/sh -c 'echo on > /sys%p/../power/control'"

@@ -29,6 +29,11 @@ command -v ffmpeg >/dev/null || echo "warning: ffmpeg isn't installed, so tailca
 # The gate runs as root, so it runs from a root-owned copy: the checkout is writable by you, and so by
 # tailcam, which serves the network.
 sudo install -D -o root -g root -m 0644 "$dir/rpi/gate.py" /usr/local/lib/tailcam/gate.py
+# Keep the webcams out of USB autosuspend (see the rule file for why). The trigger applies it to
+# cameras that are already plugged in; later ones get it as they connect.
+sudo install -o root -g root -m 0644 "$dir/rpi/50-tailcam-cameras.rules" /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=usb --attr-match=bInterfaceClass=0e
 for unit in tailcam tailcam-gate; do
     sed -e "s|@DIR@|$dir|g" -e "s|@USER@|$(id -un)|g" -e "s|@UV@|$uv|g" "$dir/rpi/$unit.service" |
         sudo tee "/etc/systemd/system/$unit.service" >/dev/null
