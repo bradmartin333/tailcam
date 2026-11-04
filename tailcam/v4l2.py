@@ -244,6 +244,40 @@ class Controls:
         self._set((CID_FOCUS_AUTO, 1 if on else 0), forget=[CID_FOCUS_ABSOLUTE] if on else [])
 
 
+class Capability(ctypes.Structure):
+    _fields_ = [("driver", ctypes.c_char * 16), ("card", ctypes.c_char * 32), ("bus_info", ctypes.c_char * 32),
+                ("version", ctypes.c_uint32), ("capabilities", ctypes.c_uint32), ("device_caps", ctypes.c_uint32),
+                ("reserved", ctypes.c_uint32 * 3)]
+
+
+VIDIOC_QUERYCAP = 0x80000000 | (ctypes.sizeof(Capability) << 16) | (ord("V") << 8) | 0
+CAP_VIDEO_CAPTURE = 0x00000001
+CAP_DEVICE_CAPS = 0x80000000
+
+
+def is_capture_node(index):
+    """False only for a /dev/video<index> known not to capture video, such as the metadata-only node many
+    UVC webcams add next to their real one. Anything else (no node, an ioctl error, not Linux) is True,
+    so the caller falls back to finding out by reading a frame."""
+    if not sys.platform.startswith("linux"):
+        return True
+    try:
+        fd = os.open(f"/dev/video{index}", os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return True
+    try:
+        cap = Capability()
+        fcntl.ioctl(fd, VIDIOC_QUERYCAP, cap)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    # capabilities covers the whole physical device, so a metadata node shows its sibling's VIDEO_CAPTURE
+    # there; device_caps, when the driver fills it in, describes this node alone.
+    caps = cap.device_caps if cap.capabilities & CAP_DEVICE_CAPS else cap.capabilities
+    return bool(caps & CAP_VIDEO_CAPTURE)
+
+
 def controls_for(index):
     if not sys.platform.startswith("linux"):
         return None

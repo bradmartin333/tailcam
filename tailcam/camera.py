@@ -5,8 +5,8 @@ import time
 import cv2
 
 from .audio import audio_finder
-from .config import IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
-from .v4l2 import controls_for
+from .config import FIRST_FRAME_TIMEOUT, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .v4l2 import controls_for, is_capture_node
 
 
 class Camera:
@@ -112,13 +112,33 @@ def to_jpeg(img):
     return jpeg if jpeg.endswith(b"\xff\xd9") else jpeg + b"\xff\xd9"
 
 
+def first_frame(cap, index):
+    """Whether an opened capture delivers a frame within FIRST_FRAME_TIMEOUT seconds. A camera just
+    woken from USB autosuspend can fail its first reads; the IR Arducam took up to 2.19 s to send one."""
+    deadline = time.monotonic() + FIRST_FRAME_TIMEOUT
+    attempts = 0
+    while True:
+        attempts += 1
+        if cap.read()[0]:
+            if attempts > 1:
+                print(f"camera {index}: first frame after {attempts} reads", flush=True)
+            return True
+        if time.monotonic() >= deadline:
+            print(f"camera {index}: opened but sent no frame in {FIRST_FRAME_TIMEOUT} s, skipping", flush=True)
+            return False
+        time.sleep(0.2)
+
+
 def detect_cameras():
     find_audio = audio_finder(sys.platform)
     cameras = {}
     for i in range(MAX_CAMERAS):
+        # Many USB webcams expose a second metadata-only /dev/video node. On Linux those are skipped up front,
+        # so only a real camera gets the retries; elsewhere, failing to read a frame filters them out.
+        if not is_capture_node(i):
+            continue
         cap = open_capture(i)
-        # Many USB webcams expose a second metadata-only /dev/video node; reading a frame filters those out.
-        if cap.isOpened() and cap.read()[0]:
+        if cap.isOpened() and first_frame(cap, i):
             audio = find_audio(i)
             controls = controls_for(i)
             cameras[i] = Camera(i, cap, audio, controls)

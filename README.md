@@ -58,6 +58,7 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `TAILCAM_MAX_CAMERAS` | `10` | number of device indexes probed, from 0 |
 | `TAILCAM_JPEG_QUALITY` | `80` | 0–100, for cameras that can't send MJPEG (MJPEG frames pass through unchanged) |
 | `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera goes idle |
+| `TAILCAM_FIRST_FRAME_TIMEOUT` | `5` | seconds a camera gets at startup to send its first frame before it's left out, for cameras slow to wake |
 | `TAILCAM_HOSTS` | any | comma-separated `Host` values to answer; others get a 403, which blocks DNS rebinding. [`compose.yml`](compose.yml) sets it to the tailnet IP |
 | `TAILCAM_LED_OFF` | `1` | `1` turns status LEDs off; `0` (or `false`, `off`, `no`) sets them back to the camera's default (usually lit while streaming) |
 
@@ -80,7 +81,7 @@ rpi/install.sh gate     # run tailcam only while the circuit is closed
 rpi/install.sh always   # run it all the time, without the sensor
 ```
 
-It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel suspends a camera while tailcam is stopped. Since tailcam looks for cameras only at startup, a camera still waking when the door closes can be missed until the next restart.
+It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel suspends a camera while tailcam is stopped. tailcam looks for cameras only at startup and gives each one `TAILCAM_FIRST_FRAME_TIMEOUT` seconds to send a frame, but a camera that misses that window stays missing until the next restart.
 
 Rerun it after a `git pull`, since the gate runs from a root-owned copy in `/usr/local/lib/tailcam`. Also rerun it to switch modes, or after moving the checkout or reinstalling `uv`. It stops if the OS is 32-bit or the checkout path has unusual characters, and warns if `ffmpeg` is missing. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
 
