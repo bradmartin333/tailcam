@@ -19,6 +19,7 @@ STATIC = {
 class Handler(BaseHTTPRequestHandler):
     cameras = {}
     order = []  # camera ids in page order; set from the page, lasts until restart
+    on_restart = None  # set by main(); stops the server so the process can exit and be restarted
 
     def do_GET(self):
         if self.path == "/healthz":  # the container's own healthcheck uses 127.0.0.1
@@ -45,6 +46,8 @@ class Handler(BaseHTTPRequestHandler):
             self._focus(cam_id)
         elif route == "order" and not cam_id:
             self._set_order()
+        elif route == "restart" and not cam_id:
+            self._restart()
         else:
             self.send_error(404)
 
@@ -99,6 +102,16 @@ class Handler(BaseHTTPRequestHandler):
         Handler.order = [int(i) for i in ids]
         self.send_response(204)
         self.end_headers()
+
+    def _restart(self):
+        """Empty POST body. Answers, then exits so the supervisor starts a fresh process, which looks for
+        cameras again (e.g. one that was missing at startup)."""
+        if self._read_form() is None:
+            return
+        self.send_response(204)
+        self.end_headers()
+        print("tailcam: restart requested from the page", flush=True)
+        Handler.on_restart()
 
     def _index(self):
         if self.cameras:

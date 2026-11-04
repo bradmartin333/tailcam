@@ -14,6 +14,8 @@ On a keyboard, ← and → move the selected feed earlier or later on the page. 
 
 If the selected camera can focus manually, a slider appears under its feed. While "auto" is ticked, the slider is disabled and follows the autofocus. Untick it to focus by hand. The setting lasts until the container restarts.
 
+The buttons under the feeds are **Refresh**, which reloads the page, and **Restart**, which restarts tailcam for every viewer. A restart looks for cameras again, so use it when a camera is missing, e.g. one plugged in after startup or one that was slow to wake. The page reloads itself once tailcam is back. tailcam just exits and relies on whatever runs it to start it again: Docker's `restart: unless-stopped` in [`compose.yml`](compose.yml), or `Restart=always` in [`tailcam.service`](rpi/tailcam.service). Run by hand, it simply stops. Anyone who can open the page can restart it, including through the public token link.
+
 ## Run it
 
 The app has no login of its own, so something in front of it decides who gets in. There are two ways to run it. Both use the image `bradmartin333/tailcam:latest`, which CI pushes to Docker Hub on every commit to `main`. Both compose files name the container `tailcam`, so run only one per box.
@@ -48,6 +50,7 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic; 404 if it has none |
 | `/focus/<n>` | `GET` returns focus as JSON; `POST` sets it with form body `value=<n>` or `auto=0`/`auto=1`; 404 if the camera can't focus |
 | `/order` | `POST` sets the page order with form body `order=2,0,1` (every camera, once each) |
+| `/restart` | `POST` (empty body) exits so the supervisor restarts tailcam, which looks for cameras again |
 | `/healthz` | liveness check |
 
 ## Configuration
