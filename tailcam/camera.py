@@ -7,6 +7,7 @@ import cv2
 
 from .audio import audio_finder
 from .config import FIRST_FRAME_TIMEOUT, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .thermal import log_cpu_temperature
 from .v4l2 import controls_for, is_capture_node, stream_error
 
 
@@ -144,6 +145,9 @@ def log_stream_error(index):
               f"(unplug it or reboot); restarting tailcam doesn't help", flush=True)
     else:
         print(f"camera {index}: starting its stream fails: {err}", flush=True)
+    # The Arducam got stuck when the Pi ran hot, so record the temperature at the moment a camera fails,
+    # which can be hours after the reading tailcam logged at startup.
+    log_cpu_temperature()
 
 
 def detect_cameras():
