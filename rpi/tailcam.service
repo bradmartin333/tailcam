@@ -17,6 +17,9 @@ SupplementaryGroups=video audio
 Environment="UV=@UV@"
 Restart=always
 RestartSec=5
+# The gate stops tailcam with SIGTERM, which run.sh's exec'd uv exits from with 143 (128 + 15). That's a
+# normal stop, not a failure.
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target
