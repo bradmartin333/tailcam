@@ -44,6 +44,8 @@ class AudioSource:
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 )
                 threading.Thread(target=self._run, args=(self.proc,), daemon=True).start()
+                # Logged, like the cameras' idle/waking, so a camera failure can be lined up with mic use.
+                print(f"audio {self.name}: listening, ffmpeg started", flush=True)
         return q
 
     def unsubscribe(self, q):
@@ -52,6 +54,7 @@ class AudioSource:
             if not self.listeners and self.proc is not None:
                 self.proc.terminate()
                 self.proc = None
+                print(f"audio {self.name}: no listeners, ffmpeg stopped", flush=True)
 
     def _run(self, proc):
         while chunk := proc.stdout.read1(4096):

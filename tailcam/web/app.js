@@ -185,14 +185,20 @@ status.id = "status";
 document.body.append(status);
 let failures = 0;
 let checking = false;
-setInterval(async () => {
-  if (document.hidden || checking) return;
-  checking = true;
-  let ok = false;
+let restarting = false;  // set by the restart button below
+async function healthy() {
   try {
-    ok = (await fetch("/healthz", { cache: "no-store", signal: AbortSignal.timeout(3000) })).ok;
-  } catch {}
+    return (await fetch("/healthz", { cache: "no-store", signal: AbortSignal.timeout(3000) })).ok;
+  } catch {
+    return false;
+  }
+}
+setInterval(async () => {
+  if (document.hidden || checking || restarting) return;
+  checking = true;
+  const ok = await healthy();
   checking = false;
+  if (restarting) return;  // the restart button took over while this check was in flight
   failures = ok ? 0 : failures + 1;
   if (failures >= 2) {  // one slow answer on a bad link isn't an outage
     document.body.classList.add("offline");
@@ -201,3 +207,42 @@ setInterval(async () => {
     status.textContent = "Back online — refresh to reconnect";
   }
 }, 3000);
+
+document.getElementById("refresh").addEventListener("click", () => location.reload());
+
+// Restart makes the server exit; systemd or Docker starts it again, and it looks for cameras afresh.
+// Check every second until it has gone away and come back, then reload. The quick checks matter
+// because a fast restart can be down for only a couple of seconds. If it never seems to go down,
+// reload anyway after a while rather than wait forever.
+const restartButton = document.getElementById("restart");
+restartButton.addEventListener("click", async () => {
+  if (restarting || !confirm("Restart tailcam? Every viewer's feeds drop for a few seconds.")) return;
+  restarting = true;
+  restartButton.disabled = true;
+  stop();
+  document.body.classList.add("offline");
+  status.textContent = "Restarting…";
+  try {
+    const res = await fetch("/restart", { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    // The server may have gone away before answering; if it's still up, the restart didn't happen.
+    if (await healthy()) {
+      restarting = false;
+      restartButton.disabled = false;
+      document.body.classList.remove("offline");
+      status.textContent = "";
+      alert("Restart failed.");
+      return;
+    }
+  }
+  const started = Date.now();
+  let wentDown = false;
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1000));
+    const ok = await healthy();
+    if (!ok) wentDown = true;
+    else if (wentDown || Date.now() - started > 10000) break;
+  }
+  location.reload();
+});

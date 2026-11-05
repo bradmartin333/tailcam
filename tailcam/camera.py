@@ -1,3 +1,4 @@
+import errno
 import sys
 import threading
 import time
@@ -5,8 +6,8 @@ import time
 import cv2
 
 from .audio import audio_finder
-from .config import IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
-from .v4l2 import controls_for
+from .config import FIRST_FRAME_TIMEOUT, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .v4l2 import controls_for, is_capture_node, stream_error
 
 
 class Camera:
@@ -64,6 +65,7 @@ class Camera:
                 if failures >= 50:
                     print(f"camera {self.index}: no frames, reopening", flush=True)
                     self.cap.release()
+                    log_stream_error(self.index)
                     time.sleep(2)
                     self.cap = open_capture(self.index)
                     if self.controls:
@@ -112,13 +114,48 @@ def to_jpeg(img):
     return jpeg if jpeg.endswith(b"\xff\xd9") else jpeg + b"\xff\xd9"
 
 
+def first_frame(cap, index):
+    """Whether an opened capture delivers a frame within FIRST_FRAME_TIMEOUT seconds. A camera just
+    woken from USB autosuspend can fail its first reads; the IR Arducam took up to 2.19 s to send one."""
+    deadline = time.monotonic() + FIRST_FRAME_TIMEOUT
+    attempts = 0
+    while True:
+        attempts += 1
+        if cap.read()[0]:
+            if attempts > 1:
+                print(f"camera {index}: first frame after {attempts} reads", flush=True)
+            return True
+        if time.monotonic() >= deadline:
+            print(f"camera {index}: opened but sent no frame in {FIRST_FRAME_TIMEOUT} s, skipping", flush=True)
+            return False
+        time.sleep(0.2)
+
+
+def log_stream_error(index):
+    """Log why a camera that stopped sending frames won't stream, which OpenCV doesn't say. Call it after
+    releasing the capture, since a stream that's still running would make the check fail with EBUSY."""
+    if not sys.platform.startswith("linux"):
+        return
+    err = stream_error(index)
+    if err is None:
+        print(f"camera {index}: starting its stream directly works", flush=True)
+    elif err.errno == errno.EPROTO:
+        print(f"camera {index}: starting its stream fails: {err}. The camera is stuck until it loses power "
+              f"(unplug it or reboot); restarting tailcam doesn't help", flush=True)
+    else:
+        print(f"camera {index}: starting its stream fails: {err}", flush=True)
+
+
 def detect_cameras():
     find_audio = audio_finder(sys.platform)
     cameras = {}
     for i in range(MAX_CAMERAS):
+        # Many USB webcams expose a second metadata-only /dev/video node. On Linux those are skipped up front,
+        # so only a real camera gets the retries; elsewhere, failing to read a frame filters them out.
+        if not is_capture_node(i):
+            continue
         cap = open_capture(i)
-        # Many USB webcams expose a second metadata-only /dev/video node; reading a frame filters those out.
-        if cap.isOpened() and cap.read()[0]:
+        if cap.isOpened() and first_frame(cap, i):
             audio = find_audio(i)
             controls = controls_for(i)
             cameras[i] = Camera(i, cap, audio, controls)
@@ -129,7 +166,10 @@ def detect_cameras():
                 if not controls.has_led():
                     print(f"camera {i}: no LED control found, LED left as is", flush=True)
         else:
+            opened = cap.isOpened()
             cap.release()
+            if opened:
+                log_stream_error(i)
     if not cameras:
         print("warning: no cameras detected", flush=True)
     return cameras

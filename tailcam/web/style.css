@@ -14,3 +14,7 @@ p { padding: 12px 16px; margin: 0; }
 #status { display: none; position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 8px; background: #333; font-size: 14px; white-space: nowrap; }
 body.offline #status { display: block; }
 body.offline main { filter: grayscale(1) brightness(0.4); }
+footer { display: flex; justify-content: center; gap: 8px; padding: 4px 12px 16px; }
+footer button { padding: 6px 14px; border: 1px solid #444; border-radius: 6px; background: #222; color: #ccc; font: inherit; font-size: 14px; cursor: pointer; }
+footer button:hover { background: #2c2c2c; color: #eee; }
+footer button:disabled { opacity: 0.5; cursor: default; }

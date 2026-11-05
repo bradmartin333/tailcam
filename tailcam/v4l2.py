@@ -244,6 +244,72 @@ class Controls:
         self._set((CID_FOCUS_AUTO, 1 if on else 0), forget=[CID_FOCUS_ABSOLUTE] if on else [])
 
 
+class Capability(ctypes.Structure):
+    _fields_ = [("driver", ctypes.c_char * 16), ("card", ctypes.c_char * 32), ("bus_info", ctypes.c_char * 32),
+                ("version", ctypes.c_uint32), ("capabilities", ctypes.c_uint32), ("device_caps", ctypes.c_uint32),
+                ("reserved", ctypes.c_uint32 * 3)]
+
+
+VIDIOC_QUERYCAP = 0x80000000 | (ctypes.sizeof(Capability) << 16) | (ord("V") << 8) | 0
+CAP_VIDEO_CAPTURE = 0x00000001
+CAP_DEVICE_CAPS = 0x80000000
+
+
+def is_capture_node(index):
+    """False only for a /dev/video<index> known not to capture video, such as the metadata-only node many
+    UVC webcams add next to their real one. Anything else (no node, an ioctl error, not Linux) is True,
+    so the caller falls back to finding out by reading a frame."""
+    if not sys.platform.startswith("linux"):
+        return True
+    try:
+        fd = os.open(f"/dev/video{index}", os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return True
+    try:
+        cap = Capability()
+        fcntl.ioctl(fd, VIDIOC_QUERYCAP, cap)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    # capabilities covers the whole physical device, so a metadata node shows its sibling's VIDEO_CAPTURE
+    # there; device_caps, when the driver fills it in, describes this node alone.
+    caps = cap.device_caps if cap.capabilities & CAP_DEVICE_CAPS else cap.capabilities
+    return bool(caps & CAP_VIDEO_CAPTURE)
+
+
+class RequestBuffers(ctypes.Structure):
+    _fields_ = [("count", ctypes.c_uint32), ("type", ctypes.c_uint32), ("memory", ctypes.c_uint32),
+                ("capabilities", ctypes.c_uint32), ("flags", ctypes.c_uint8), ("reserved", ctypes.c_uint8 * 3)]
+
+
+VIDIOC_REQBUFS = 0xC0000000 | (ctypes.sizeof(RequestBuffers) << 16) | (ord("V") << 8) | 8
+VIDIOC_STREAMON = 0x40000000 | (ctypes.sizeof(ctypes.c_int) << 16) | (ord("V") << 8) | 18
+BUF_TYPE_VIDEO_CAPTURE = 1
+MEMORY_MMAP = 1
+
+
+def stream_error(index):
+    """The OSError from starting /dev/video<index>'s stream directly, or None if it starts. Linux only.
+
+    OpenCV only reports that no frame came; the errno says why. EPROTO means the camera rejected the start
+    (the IR Arducam does this until it loses power), EBUSY that another process streams from it, ENOSPC that
+    the USB bus lacks bandwidth. The stream starts with no buffers queued, so no frame is read, and closing
+    the device stops it again."""
+    try:
+        fd = os.open(f"/dev/video{index}", os.O_RDWR)
+    except OSError as e:
+        return e
+    try:
+        fcntl.ioctl(fd, VIDIOC_REQBUFS, RequestBuffers(count=1, type=BUF_TYPE_VIDEO_CAPTURE, memory=MEMORY_MMAP))
+        fcntl.ioctl(fd, VIDIOC_STREAMON, ctypes.c_int(BUF_TYPE_VIDEO_CAPTURE))
+    except OSError as e:
+        return e
+    finally:
+        os.close(fd)
+    return None
+
+
 def controls_for(index):
     if not sys.platform.startswith("linux"):
         return None

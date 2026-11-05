@@ -14,6 +14,8 @@ On a keyboard, ← and → move the selected feed earlier or later on the page. 
 
 If the selected camera can focus manually, a slider appears under its feed. While "auto" is ticked, the slider is disabled and follows the autofocus. Untick it to focus by hand. The setting lasts until the container restarts.
 
+The buttons under the feeds are **Refresh**, which reloads the page, and **Restart**, which restarts tailcam for every viewer. A restart looks for cameras again, so use it when a camera is missing, e.g. one plugged in after startup or one that was slow to wake. The page reloads itself once tailcam is back. tailcam just exits and relies on whatever runs it to start it again: Docker's `restart: unless-stopped` in [`compose.yml`](compose.yml), or `Restart=always` in [`tailcam.service`](rpi/tailcam.service). Run by hand, it simply stops. Anyone who can open the page can restart it, including through the public token link.
+
 ## Run it
 
 The app has no login of its own, so something in front of it decides who gets in. There are two ways to run it. Both use the image `bradmartin333/tailcam:latest`, which CI pushes to Docker Hub on every commit to `main`. Both compose files name the container `tailcam`, so run only one per box.
@@ -48,6 +50,7 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic; 404 if it has none |
 | `/focus/<n>` | `GET` returns focus as JSON; `POST` sets it with form body `value=<n>` or `auto=0`/`auto=1`; 404 if the camera can't focus |
 | `/order` | `POST` sets the page order with form body `order=2,0,1` (every camera, once each) |
+| `/restart` | `POST` (empty body) exits so the supervisor restarts tailcam, which looks for cameras again |
 | `/healthz` | liveness check |
 
 ## Configuration
@@ -58,6 +61,7 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `TAILCAM_MAX_CAMERAS` | `10` | number of device indexes probed, from 0 |
 | `TAILCAM_JPEG_QUALITY` | `80` | 0–100, for cameras that can't send MJPEG (MJPEG frames pass through unchanged) |
 | `TAILCAM_IDLE_GRACE` | `10` | seconds without viewers before a camera goes idle |
+| `TAILCAM_FIRST_FRAME_TIMEOUT` | `5` | seconds a camera gets at startup to send its first frame before it's left out, for cameras slow to wake |
 | `TAILCAM_HOSTS` | any | comma-separated `Host` values to answer; others get a 403, which blocks DNS rebinding. [`compose.yml`](compose.yml) sets it to the tailnet IP |
 | `TAILCAM_LED_OFF` | `1` | `1` turns status LEDs off; `0` (or `false`, `off`, `no`) sets them back to the camera's default (usually lit while streaming) |
 
@@ -80,7 +84,9 @@ rpi/install.sh gate     # run tailcam only while the circuit is closed
 rpi/install.sh always   # run it all the time, without the sensor
 ```
 
-It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel suspends a camera while tailcam is stopped. Since tailcam looks for cameras only at startup, a camera still waking when the door closes can be missed until the next restart.
+It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel suspends a camera while tailcam is stopped. tailcam looks for cameras only at startup and gives each one `TAILCAM_FIRST_FRAME_TIMEOUT` seconds to send a frame, but a camera that misses that window stays missing until the next restart.
+
+When a camera opens but sends no frames, tailcam starts its stream directly and logs the error, which OpenCV hides. `Protocol error` (EPROTO) means the camera rejected the start. The IR Arducam gets stuck this way, and only losing power fixes it: unplug it or reboot the Pi, since restarting tailcam or resetting the USB device doesn't help. `Device or resource busy` means another process is streaming from it. tailcam also logs when a mic starts and stops, so `journalctl -u tailcam` shows what the cameras and mics were doing before a failure.
 
 Rerun it after a `git pull`, since the gate runs from a root-owned copy in `/usr/local/lib/tailcam`. Also rerun it to switch modes, or after moving the checkout or reinstalling `uv`. It stops if the OS is 32-bit or the checkout path has unusual characters, and warns if `ffmpeg` is missing. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
 
