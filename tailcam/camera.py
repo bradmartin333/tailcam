@@ -7,7 +7,13 @@ import cv2
 
 from .audio import audio_finder
 from .config import FIRST_FRAME_TIMEOUT, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
+from .thermal import log_cpu_temperature
 from .v4l2 import controls_for, is_capture_node, stream_error
+
+# Seconds between reopening a camera that stopped sending frames: doubling from the first to the second
+# while it keeps failing, and back to the first once it streams again.
+REOPEN_DELAY = 2
+REOPEN_MAX_DELAY = 60
 
 
 class Camera:
@@ -46,6 +52,12 @@ class Camera:
     def _run(self):
         failures = 0
         was_idle = False
+        # While a camera won't stream, reopen it with a growing delay and log only when the reason changes.
+        # The stuck Arducam fails the same way until it loses power, which used to log every 7 s. Retries never
+        # stop, so a replugged camera comes back on its own within REOPEN_MAX_DELAY.
+        stuck = False
+        reason = None
+        delay = REOPEN_DELAY
         while True:
             with self.cond:
                 idle = self._idle()
@@ -63,16 +75,26 @@ class Camera:
                 failures += 1
                 time.sleep(0.1)
                 if failures >= 50:
-                    print(f"camera {self.index}: no frames, reopening", flush=True)
                     self.cap.release()
-                    log_stream_error(self.index)
-                    time.sleep(2)
+                    new_reason = stream_error_message(self.index)
+                    if not stuck or new_reason != reason:
+                        print(f"camera {self.index}: no frames, reopening until it streams again "
+                              f"(retries slow down to every {REOPEN_MAX_DELAY} s)", flush=True)
+                        if new_reason:
+                            print(f"camera {self.index}: {new_reason}", flush=True)
+                        log_cpu_temperature()
+                        stuck, reason = True, new_reason
+                    time.sleep(delay)
+                    delay = min(delay * 2, REOPEN_MAX_DELAY)
                     self.cap = open_capture(self.index)
                     if self.controls:
                         self.controls.apply()
                     failures = 0
                 continue
             failures = 0
+            if stuck:
+                print(f"camera {self.index}: streaming again", flush=True)
+                stuck, reason, delay = False, None, REOPEN_DELAY
             if idle:
                 continue
             with self.cond:
@@ -131,19 +153,25 @@ def first_frame(cap, index):
         time.sleep(0.2)
 
 
-def log_stream_error(index):
-    """Log why a camera that stopped sending frames won't stream, which OpenCV doesn't say. Call it after
-    releasing the capture, since a stream that's still running would make the check fail with EBUSY."""
+def stream_error_message(index):
+    """Why a camera that stopped sending frames won't stream, which OpenCV doesn't say, or None off Linux.
+    Call it after releasing the capture, since a stream that's still running would make the check fail with EBUSY."""
     if not sys.platform.startswith("linux"):
-        return
+        return None
     err = stream_error(index)
     if err is None:
-        print(f"camera {index}: starting its stream directly works", flush=True)
-    elif err.errno == errno.EPROTO:
-        print(f"camera {index}: starting its stream fails: {err}. The camera is stuck until it loses power "
-              f"(unplug it or reboot); restarting tailcam doesn't help", flush=True)
-    else:
-        print(f"camera {index}: starting its stream fails: {err}", flush=True)
+        return "starting its stream directly works"
+    if err.errno == errno.EPROTO:
+        return (f"starting its stream fails: {err}. The camera is stuck until it loses power "
+                f"(unplug it or reboot); restarting tailcam doesn't help")
+    return f"starting its stream fails: {err}"
+
+
+def log_stream_error(index):
+    if message := stream_error_message(index):
+        print(f"camera {index}: {message}", flush=True)
+    # The Arducam got stuck when the Pi ran hot, so record the temperature at the moment a camera fails.
+    log_cpu_temperature()
 
 
 def detect_cameras():

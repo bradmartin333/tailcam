@@ -5,9 +5,11 @@ from http.server import ThreadingHTTPServer
 from .camera import detect_cameras
 from .config import PORT
 from .server import Handler
+from .thermal import log_cpu_temperature
 
 
 def main():
+    log_cpu_temperature()
     Handler.cameras = detect_cameras()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
