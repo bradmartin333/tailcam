@@ -7,7 +7,19 @@ from .config import PORT
 from .server import Handler
 
 
+def log_temperature():
+    """Log the CPU temperature, which Linux exposes on a Pi and most other boards. The IR Arducam got stuck
+    on afternoons when the Pi had hit its 60 °C soft limit, so each start records it next to the camera lines."""
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            millidegrees = int(f.read())
+    except (OSError, ValueError):
+        return
+    print(f"cpu temperature: {millidegrees / 1000:.1f} °C", flush=True)
+
+
 def main():
+    log_temperature()
     Handler.cameras = detect_cameras()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
