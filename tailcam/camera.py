@@ -1,3 +1,4 @@
+import errno
 import sys
 import threading
 import time
@@ -6,7 +7,7 @@ import cv2
 
 from .audio import audio_finder
 from .config import FIRST_FRAME_TIMEOUT, IDLE_GRACE, JPEG_QUALITY, MAX_CAMERAS
-from .v4l2 import controls_for, is_capture_node
+from .v4l2 import controls_for, is_capture_node, stream_error
 
 
 class Camera:
@@ -64,6 +65,7 @@ class Camera:
                 if failures >= 50:
                     print(f"camera {self.index}: no frames, reopening", flush=True)
                     self.cap.release()
+                    log_stream_error(self.index)
                     time.sleep(2)
                     self.cap = open_capture(self.index)
                     if self.controls:
@@ -129,6 +131,21 @@ def first_frame(cap, index):
         time.sleep(0.2)
 
 
+def log_stream_error(index):
+    """Log why a camera that stopped sending frames won't stream, which OpenCV doesn't say. Call it after
+    releasing the capture, since a stream that's still running would make the check fail with EBUSY."""
+    if not sys.platform.startswith("linux"):
+        return
+    err = stream_error(index)
+    if err is None:
+        print(f"camera {index}: starting its stream directly works", flush=True)
+    elif err.errno == errno.EPROTO:
+        print(f"camera {index}: starting its stream fails: {err}. The camera is stuck until it loses power "
+              f"(unplug it or reboot); restarting tailcam doesn't help", flush=True)
+    else:
+        print(f"camera {index}: starting its stream fails: {err}", flush=True)
+
+
 def detect_cameras():
     find_audio = audio_finder(sys.platform)
     cameras = {}
@@ -149,7 +166,10 @@ def detect_cameras():
                 if not controls.has_led():
                     print(f"camera {i}: no LED control found, LED left as is", flush=True)
         else:
+            opened = cap.isOpened()
             cap.release()
+            if opened:
+                log_stream_error(i)
     if not cameras:
         print("warning: no cameras detected", flush=True)
     return cameras

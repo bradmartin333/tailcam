@@ -278,6 +278,38 @@ def is_capture_node(index):
     return bool(caps & CAP_VIDEO_CAPTURE)
 
 
+class RequestBuffers(ctypes.Structure):
+    _fields_ = [("count", ctypes.c_uint32), ("type", ctypes.c_uint32), ("memory", ctypes.c_uint32),
+                ("capabilities", ctypes.c_uint32), ("flags", ctypes.c_uint8), ("reserved", ctypes.c_uint8 * 3)]
+
+
+VIDIOC_REQBUFS = 0xC0000000 | (ctypes.sizeof(RequestBuffers) << 16) | (ord("V") << 8) | 8
+VIDIOC_STREAMON = 0x40000000 | (ctypes.sizeof(ctypes.c_int) << 16) | (ord("V") << 8) | 18
+BUF_TYPE_VIDEO_CAPTURE = 1
+MEMORY_MMAP = 1
+
+
+def stream_error(index):
+    """The OSError from starting /dev/video<index>'s stream directly, or None if it starts. Linux only.
+
+    OpenCV only reports that no frame came; the errno says why. EPROTO means the camera rejected the start
+    (the IR Arducam does this until it loses power), EBUSY that another process streams from it, ENOSPC that
+    the USB bus lacks bandwidth. The stream starts with no buffers queued, so no frame is read, and closing
+    the device stops it again."""
+    try:
+        fd = os.open(f"/dev/video{index}", os.O_RDWR)
+    except OSError as e:
+        return e
+    try:
+        fcntl.ioctl(fd, VIDIOC_REQBUFS, RequestBuffers(count=1, type=BUF_TYPE_VIDEO_CAPTURE, memory=MEMORY_MMAP))
+        fcntl.ioctl(fd, VIDIOC_STREAMON, ctypes.c_int(BUF_TYPE_VIDEO_CAPTURE))
+    except OSError as e:
+        return e
+    finally:
+        os.close(fd)
+    return None
+
+
 def controls_for(index):
     if not sys.platform.startswith("linux"):
         return None
