@@ -148,7 +148,7 @@ def first_frame(cap, index):
                 print(f"camera {index}: first frame after {attempts} reads", flush=True)
             return True
         if time.monotonic() >= deadline:
-            print(f"camera {index}: opened but sent no frame in {FIRST_FRAME_TIMEOUT} s, skipping", flush=True)
+            print(f"camera {index}: opened but sent no frame in {FIRST_FRAME_TIMEOUT} s", flush=True)
             return False
         time.sleep(0.2)
 
@@ -158,7 +158,10 @@ def stream_error_message(index):
     Call it after releasing the capture, since a stream that's still running would make the check fail with EBUSY."""
     if not sys.platform.startswith("linux"):
         return None
-    err = stream_error(index)
+    return describe_stream_error(stream_error(index))
+
+
+def describe_stream_error(err):
     if err is None:
         return "starting its stream directly works"
     if err.errno == errno.EPROTO:
@@ -167,11 +170,32 @@ def stream_error_message(index):
     return f"starting its stream fails: {err}"
 
 
-def log_stream_error(index):
-    if message := stream_error_message(index):
-        print(f"camera {index}: {message}", flush=True)
-    # The Arducam got stuck when the Pi ran hot, so record the temperature at the moment a camera fails.
-    log_cpu_temperature()
+def open_camera(index):
+    """The capture for camera <index> once it has sent its first frame, or None to leave the camera out.
+
+    The IR Arducam sometimes opens after a long stop but sends OpenCV no frame, while starting its stream
+    directly works, and a restart minutes later always finds it. So a camera that fails that way is released
+    and opened once more. A camera whose stream won't start (e.g. the Arducam's power-cycle-only EPROTO) isn't."""
+    for attempt in (1, 2):
+        cap = open_capture(index)
+        if cap.isOpened() and first_frame(cap, index):
+            if attempt > 1:
+                print(f"camera {index}: sent a frame after reopening", flush=True)
+            return cap
+        opened = cap.isOpened()
+        cap.release()
+        # Off Linux there's no direct check, and an opened index that sends nothing is usually not a camera.
+        if not opened or not sys.platform.startswith("linux"):
+            return None
+        err = stream_error(index)
+        print(f"camera {index}: {describe_stream_error(err)}", flush=True)
+        # The Arducam got stuck when the Pi ran hot, so record the temperature at the moment a camera fails.
+        log_cpu_temperature()
+        if err is not None or attempt > 1:
+            print(f"camera {index}: leaving it out until tailcam restarts", flush=True)
+            return None
+        print(f"camera {index}: reopening it once", flush=True)
+        time.sleep(1)
 
 
 def detect_cameras():
@@ -182,8 +206,8 @@ def detect_cameras():
         # so only a real camera gets the retries; elsewhere, failing to read a frame filters them out.
         if not is_capture_node(i):
             continue
-        cap = open_capture(i)
-        if cap.isOpened() and first_frame(cap, i):
+        cap = open_camera(i)
+        if cap is not None:
             audio = find_audio(i)
             controls = controls_for(i)
             cameras[i] = Camera(i, cap, audio, controls)
@@ -193,11 +217,6 @@ def detect_cameras():
                 print(f"camera {i} controls: {', '.join(controls.names()) or 'none'}", flush=True)
                 if not controls.has_led():
                     print(f"camera {i}: no LED control found, LED left as is", flush=True)
-        else:
-            opened = cap.isOpened()
-            cap.release()
-            if opened:
-                log_stream_error(i)
     if not cameras:
         print("warning: no cameras detected", flush=True)
     return cameras
