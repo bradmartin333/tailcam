@@ -14,3 +14,9 @@ HOSTS = {h.strip().lower() for h in os.environ.get("TAILCAM_HOSTS", "").split(",
 # 1 switches each camera's status LED off at startup. 0 (or false/off/no) sets it back to the camera's default (usually lit
 # while streaming); just leaving it alone would keep a Logitech LED off from an earlier run until replugged.
 LED_OFF = os.environ.get("TAILCAM_LED_OFF", "1").strip().lower() not in ("0", "false", "off", "no")
+# The door sensor's BCM GPIO number, e.g. 17 (physical pin 11). Set, feeds and mics are served only while its
+# circuit is closed; unset, always. TAILCAM_GATE_SETTLE is how long the pin must hold steady before feeds
+# come back. See tailcam/gate.py and the README ("Door sensor").
+# A value that isn't a GPIO number fails to open like a missing pin does, which keeps feeds off.
+GATE_PIN = os.environ.get("TAILCAM_GATE_PIN", "").strip() or None
+GATE_SETTLE = float(os.environ.get("TAILCAM_GATE_SETTLE", "2"))

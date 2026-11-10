@@ -46,11 +46,12 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | Path | |
 |---|---|
 | `/` | grid of all cameras |
-| `/stream/<n>` | MJPEG stream from camera `n` |
-| `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic; 404 if it has none |
+| `/stream/<n>` | MJPEG stream from camera `n`; 503 while the door sensor's circuit is open |
+| `/audio/<n>` | raw PCM (s16le, mono, 24 kHz) from camera `n`'s mic; 404 if it has none, 503 while the door sensor's circuit is open |
 | `/focus/<n>` | `GET` returns focus as JSON; `POST` sets it with form body `value=<n>` or `auto=0`/`auto=1`; 404 if the camera can't focus |
 | `/order` | `POST` sets the page order with form body `order=2,0,1` (every camera, once each) |
 | `/restart` | `POST` (empty body) exits so the supervisor restarts tailcam, which looks for cameras again |
+| `/status` | JSON `{"door": "open"}`, `"closed"`, or `null` without a door sensor |
 | `/healthz` | liveness check |
 
 ## Configuration
@@ -64,6 +65,8 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 | `TAILCAM_FIRST_FRAME_TIMEOUT` | `5` | seconds a camera gets at startup to send its first frame before it's left out, for cameras slow to wake |
 | `TAILCAM_HOSTS` | any | comma-separated `Host` values to answer; others get a 403, which blocks DNS rebinding. [`compose.yml`](compose.yml) sets it to the tailnet IP |
 | `TAILCAM_LED_OFF` | `1` | `1` turns status LEDs off; `0` (or `false`, `off`, `no`) sets them back to the camera's default (usually lit while streaming) |
+| `TAILCAM_GATE_PIN` | unset | a door sensor's BCM GPIO, e.g. `17`; feeds and mics are served only while its circuit is closed. See "Door sensor" below |
+| `TAILCAM_GATE_SETTLE` | `2` | seconds the door sensor's pin must hold steady before feeds come back |
 
 [`run.sh`](run.sh) loads these from a `.env` beside it, and [`compose.yml`](compose.yml) passes `TAILCAM_LED_OFF` through from its `.env`.
 
@@ -71,26 +74,28 @@ The homelab runs tailcam this way at `https://$TAILCAM_DOMAIN`, from [`tailcam/d
 
 On a Pi, tailcam can run without Docker as [`rpi/tailcam.service`](rpi/tailcam.service), which runs `run.sh`. It needs a 64-bit OS, because OpenCV has no 32-bit ARM build on PyPI, and `ffmpeg` for audio (`sudo apt install ffmpeg`). Run this way, it answers on every network interface at port 8080, so anyone on the same network can watch without joining the tailnet. Set `TAILCAM_HOSTS` in `.env` to limit which addresses it answers to.
 
-[`rpi/gate.py`](rpi/gate.py) can then run it only while a door sensor's circuit is closed. It sleeps until the pin changes, so it uses no CPU. It also waits for the pin to hold steady for `TAILCAM_GATE_SETTLE` seconds before reading it, so a door that opens and closes quickly causes at most one start or stop. It needs only `python3`.
+With `TAILCAM_GATE_PIN` set, tailcam serves the feeds and mics only while a door sensor's circuit is closed. It works like a shutter over the lenses: tailcam and the cameras keep running, but nothing is sent while the door is open. Any stream in progress ends as soon as the circuit opens, and the page greys out and says "Door open". Feeds come back once the pin has held closed for `TAILCAM_GATE_SETTLE` seconds, and the page reconnects them on its own. If the pin can't be opened or read, tailcam keeps the feeds off and logs why. The code is in [`tailcam/gate.py`](tailcam/gate.py). It sleeps until the pin changes, so it uses no CPU.
+
+The gate used to stop tailcam while the door was open and start it again when the door closed. Opening the cameras on every door close sometimes left the IR Arducam sending no frames, or stuck until it lost power, so tailcam now opens them once, at boot.
 
 Wire the sensor between a GPIO (BCM 17, physical pin 11, by default) and ground. The gate turns on the Pi's internal pull-up, so the pin reads closed while the sensor pulls it low. That suits a reed switch or a bare open-collector hall sensor such as the A3144, and neither needs a resistor. Power a hall sensor from 5 V if its datasheet requires it (the A3144 needs 4.5 V), since its output only ever sinks to ground. A breakout board with its own pull-up resistor or LED is different: it pulls the output up to its supply, so power it from 3.3 V, never 5 V.
 
-If a start or stop fails, the gate tries again every 30 seconds. If you stop tailcam by hand, it stays stopped until the door next moves.
-
-Install both units from the checkout as the user tailcam should run as, not with `sudo`. [`rpi/install.sh`](rpi/install.sh) fills in the checkout path, your user and `uv`'s location, and asks for `sudo` itself:
+Install the unit from the checkout as the user tailcam should run as, not with `sudo`. [`rpi/install.sh`](rpi/install.sh) fills in the checkout path, your user and `uv`'s location, and asks for `sudo` itself. tailcam then runs all the time, from boot:
 
 ```sh
-rpi/install.sh gate     # run tailcam only while the circuit is closed
-rpi/install.sh always   # run it all the time, without the sensor
+rpi/install.sh gate     # serve the feeds only while the circuit is closed
+rpi/install.sh always   # serve them all the time, without the sensor
 ```
 
-It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel suspends a camera while tailcam is stopped. tailcam looks for cameras only at startup and gives each one `TAILCAM_FIRST_FRAME_TIMEOUT` seconds to send a frame, but a camera that misses that window stays missing until the next restart.
+In `gate` mode it sets `TAILCAM_GATE_PIN=17` and `TAILCAM_GATE_SETTLE=2` in a drop-in, and adds tailcam to the `gpio` group to read the pin. Change them with `sudo systemctl edit tailcam.service`, which keeps them across reinstalls. If an older install ran the separate `tailcam-gate` service, the script stops and removes it.
+
+It also installs [`rpi/50-tailcam-cameras.rules`](rpi/50-tailcam-cameras.rules), a udev rule that keeps every USB webcam out of USB autosuspend. Otherwise the kernel can suspend a camera before tailcam opens it at boot. tailcam looks for cameras only at startup and gives each one `TAILCAM_FIRST_FRAME_TIMEOUT` seconds to send a frame, but a camera that misses that window stays missing until the next restart.
 
 When a camera opens but sends no frames, tailcam starts its stream directly and logs the error, which OpenCV hides. `Protocol error` (EPROTO) means the camera rejected the start. The IR Arducam gets stuck this way, and only losing power fixes it: unplug it or reboot the Pi, since restarting tailcam or resetting the USB device doesn't help. `Device or resource busy` means another process is streaming from it. While a camera won't stream, tailcam keeps reopening it, slowing down to once a minute, and logs again only if the reason changes. It logs `streaming again` when frames come back, so a replugged camera returns without a restart. tailcam also logs when a mic starts and stops, and the CPU temperature at each start and whenever a camera stops streaming, so `journalctl -u tailcam` shows what the cameras, mics and Pi were doing before a failure. The Arducam got stuck when the Pi ran hot enough to throttle without its fan.
 
 [`run.sh`](run.sh) also saves each run's output in `logs/` in the checkout, as `tailcam-<start time>.log`, and keeps the newest 10. Set `TAILCAM_LOG_KEEP` in `.env` to keep a different number, or `0` to save none. The journal gets the same lines, but the files are written as tailcam runs, so they keep a run that ended when the Pi lost power, e.g. to unstick the Arducam. A journal kept only in memory loses that. The files are named by the Pi's clock, which can be wrong until it syncs after boot, so `ls -t logs` lists them in the order they were last written.
 
-Rerun it after a `git pull`, since the gate runs from a root-owned copy in `/usr/local/lib/tailcam`. Also rerun it to switch modes, or after moving the checkout or reinstalling `uv`. It stops if the OS is 32-bit or the checkout path has unusual characters, and warns if `ffmpeg` is missing. To change the gate's settings (`TAILCAM_GATE_PIN`, `TAILCAM_GATE_SETTLE`), use `sudo systemctl edit tailcam-gate.service`, which keeps them across reinstalls.
+Rerun it to switch modes, or after moving the checkout or reinstalling `uv`. After a `git pull`, `sudo systemctl restart tailcam` is enough. The script stops if the OS is 32-bit, the checkout path has unusual characters, or `gate` mode finds no `gpio` group, and warns if `ffmpeg` is missing.
 
 ## Local dev
 

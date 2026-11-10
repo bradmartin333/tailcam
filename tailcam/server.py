@@ -20,6 +20,7 @@ class Handler(BaseHTTPRequestHandler):
     cameras = {}
     order = []  # camera ids in page order; set from the page, lasts until restart
     on_restart = None  # set by main(); stops the server so the process can exit and be restarted
+    gate = None  # set by main() when TAILCAM_GATE_PIN is set; feeds and mics are served only while it's closed
 
     def do_GET(self):
         if self.path == "/healthz":  # the container's own healthcheck uses 127.0.0.1
@@ -30,6 +31,8 @@ class Handler(BaseHTTPRequestHandler):
             self._index()
         elif self.path in STATIC:
             self._send(200, *STATIC[self.path])
+        elif self.path == "/status":
+            self._send(200, "application/json", json.dumps({"door": self._door()}).encode())
         else:
             route, cam_id = self._route()
             handler = {"stream": self._stream, "audio": self._audio, "focus": self._focus_state}.get(route)
@@ -53,6 +56,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _host_allowed(self):
         return not HOSTS or (self.headers.get("Host") or "").lower() in HOSTS
+
+    def _door(self):
+        """"open" or "closed" with a door sensor, else None."""
+        if self.gate is None:
+            return None
+        return "closed" if self.gate.closed else "open"
+
+    def _shut(self):
+        """Whether the door sensor's circuit is open, so no frames or sound may be sent."""
+        return self.gate is not None and not self.gate.closed
 
     def _route(self):
         """("stream", "0") for /stream/0?t=123."""
@@ -123,13 +136,16 @@ class Handler(BaseHTTPRequestHandler):
             body = f"<main>{figures}</main>"
         else:
             body = "<p>No cameras detected.</p>"
-        html = PAGE.substitute(body=body, audio_rate=AUDIO_RATE)
+        html = PAGE.substitute(body=body, audio_rate=AUDIO_RATE, door=self._door() or "")
         self._send(200, "text/html; charset=utf-8", html.encode())
 
     def _stream(self, cam_id):
         cam = self._camera(cam_id)
         if cam is None:
             self.send_error(404, "Camera not found")
+            return
+        if self._shut():
+            self.send_error(503, "Door open")
             return
         self.send_response(200)
         self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY}")
@@ -149,6 +165,8 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     continue
                 empty = 0
+                if self._shut():  # the door opened mid-stream; the page notices on its next status check
+                    return
                 self.wfile.write(
                     f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n".encode()
                     + frame
@@ -164,6 +182,9 @@ class Handler(BaseHTTPRequestHandler):
         if cam is None or cam.audio is None:
             self.send_error(404, "Audio not found")
             return
+        if self._shut():
+            self.send_error(503, "Door open")
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Cache-Control", "no-store")
@@ -172,7 +193,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             while True:
                 try:
-                    self.wfile.write(q.get(timeout=10))
+                    chunk = q.get(timeout=10)
+                    if self._shut():
+                        return
+                    self.wfile.write(chunk)
                 except queue.Empty:
                     # ffmpeg stalled or died. Without writes we'd never notice the client leaving,
                     # so end the stream; the page shows muted and the next tap retries.

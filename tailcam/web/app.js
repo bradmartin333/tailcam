@@ -9,6 +9,8 @@ let selected = null;
 let muted = true;
 let ctx = null;
 let session = null;
+// "open" while the Pi's door sensor has the feeds off, "closed" while it lets them through, "" without one.
+let door = document.body.dataset.door;
 
 // iOS otherwise treats Web Audio as ambient and silences it with the ring/silent switch.
 if (navigator.audioSession) navigator.audioSession.type = "playback";
@@ -79,7 +81,7 @@ async function listen(cam) {
 
 function apply() {
   stop();
-  if (!muted && selected.dataset.audio === "1") listen(selected.dataset.cam);
+  if (!muted && door !== "open" && selected.dataset.audio === "1") listen(selected.dataset.cam);
   render();
 }
 
@@ -165,24 +167,31 @@ document.addEventListener("keydown", e => {
 selected = figs[0] || null;
 render();
 
-// Drop the video streams while the tab is hidden so the server can idle the cameras.
-// Audio keeps playing, so a selected mic can still be listened to with the screen off.
+// Drop the video streams while the tab is hidden so the server can idle the cameras, and while the
+// door is open, when the server sends nothing. Audio keeps playing while hidden, so a selected mic can
+// still be listened to with the screen off.
 const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 function syncStreams() {
   for (const f of figs) {
     const img = f.querySelector("img");
-    img.src = document.hidden ? BLANK : `/stream/${f.dataset.cam}?t=${Date.now()}`;
+    img.src = document.hidden || door === "open" ? BLANK : `/stream/${f.dataset.cam}?t=${Date.now()}`;
   }
 }
 document.addEventListener("visibilitychange", syncStreams);
-if (document.hidden) syncStreams();  // opened in a background tab
+if (document.hidden || door === "open") syncStreams();  // opened in a background tab, or with the door open
 
-// When the server goes away (e.g. the Pi's door gate stops it), an <img> keeps its last frame and
-// looks live. Grey the feeds out instead. A restarted server has new streams and maybe new cameras,
-// so stay greyed once it's back and ask for a refresh rather than reconnecting.
+// When the server goes away, an <img> keeps its last frame and looks live. Grey the feeds out instead.
+// A restarted server has new streams and maybe new cameras, so stay greyed once it's back and ask for
+// a refresh rather than reconnecting. The same check follows the door: the server ends the streams
+// when it opens, and the feeds reconnect on their own once it closes, since nothing restarted.
 const status = document.createElement("div");
 status.id = "status";
 document.body.append(status);
+function showDoor() {
+  document.body.classList.toggle("shut", door === "open");
+  status.textContent = door === "open" ? "Door open — feeds off" : "";
+}
+showDoor();
 let failures = 0;
 let checking = false;
 let restarting = false;  // set by the restart button below
@@ -193,18 +202,35 @@ async function healthy() {
     return false;
   }
 }
+async function serverStatus() {
+  try {
+    const res = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(3000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
 setInterval(async () => {
   if (document.hidden || checking || restarting) return;
   checking = true;
-  const ok = await healthy();
+  const state = await serverStatus();
   checking = false;
   if (restarting) return;  // the restart button took over while this check was in flight
-  failures = ok ? 0 : failures + 1;
+  failures = state ? 0 : failures + 1;
   if (failures >= 2) {  // one slow answer on a bad link isn't an outage
     document.body.classList.add("offline");
     status.textContent = "Offline";
-  } else if (ok && document.body.classList.contains("offline")) {
+  } else if (state && document.body.classList.contains("offline")) {
     status.textContent = "Back online — refresh to reconnect";
+  } else if (state && (state.door ?? "") !== door) {
+    door = state.door ?? "";
+    if (door === "open" && session) {  // the server has cut the mic too
+      stop();
+      muted = true;
+      render();
+    }
+    showDoor();
+    syncStreams();
   }
 }, 3000);
 
